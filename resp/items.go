@@ -33,6 +33,7 @@ type Err struct {
 type BulkStr struct {
 	Size  int
 	Value string
+	Null  bool
 }
 
 func NewErr(err error) Err {
@@ -135,7 +136,10 @@ func (e *Err) WriteTo(w io.Writer) (n int64, err error) {
 }
 
 func (e *BulkStr) WriteTo(w io.Writer) (n int64, err error) {
-	header := fmt.Sprintf("$%d\r\n%s\r\n", e.Size, e.Value)
+	header := fmt.Sprintf("$%d\r\n", e.Size)
+	if e.Size >= 0 {
+		header = fmt.Sprintf("%s%s\r\n", header, e.Value)
+	}
 	if _, err := w.Write([]byte(header)); err != nil {
 		return n, err
 	}

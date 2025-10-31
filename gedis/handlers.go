@@ -122,7 +122,7 @@ func handleGet(db *database, cmd *Command) error {
 	key := args[0]
 	value, ok := db.HashMap().Get(key)
 	if !ok {
-		cmd.WriteAny(nil)
+		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
 	}
 	cmd.WriteAny(value)
