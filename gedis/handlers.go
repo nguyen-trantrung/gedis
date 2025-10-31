@@ -173,11 +173,42 @@ func handleLPop(db *database, cmd *Command) error {
 	}
 	defer cmd.SetDone()
 	key := args[0]
+
+	count := 1
+	if len(args) >= 2 {
+		countStr, ok := args[1].(resp.BulkStr)
+		if !ok {
+			return fmt.Errorf("%w: count must be integer", ErrInvalidArguments)
+		}
+		var err error
+		count, err = strconv.Atoi(countStr.Value)
+		if err != nil {
+			return fmt.Errorf("%w: count must be integer", ErrInvalidArguments)
+		}
+	}
+
 	list, exists := db.GetList(key)
 	if !exists {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
 	}
+
+	if len(args) >= 2 {
+		items := make([]any, 0, count)
+		for i := 0; i < count; i++ {
+			value, ok := list.LeftPop()
+			if !ok {
+				break
+			}
+			items = append(items, value)
+		}
+		if list.Len() == 0 {
+			db.DeleteList(key)
+		}
+		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+		return nil
+	}
+
 	value, ok := list.LeftPop()
 	if !ok {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
@@ -197,11 +228,44 @@ func handleRPop(db *database, cmd *Command) error {
 	}
 	defer cmd.SetDone()
 	key := args[0]
+
+	count := 1
+	if len(args) >= 2 {
+		countStr, ok := args[1].(resp.BulkStr)
+		if !ok {
+			return fmt.Errorf("%w: count must be integer", ErrInvalidArguments)
+		}
+		var err error
+		count, err = strconv.Atoi(countStr.Value)
+		if err != nil {
+			return fmt.Errorf("%w: count must be integer", ErrInvalidArguments)
+		}
+	}
+
 	list, exists := db.GetList(key)
 	if !exists {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
 	}
+
+	// If count is specified, return array
+	if len(args) >= 2 {
+		items := make([]any, 0, count)
+		for i := 0; i < count; i++ {
+			value, ok := list.RightPop()
+			if !ok {
+				break
+			}
+			items = append(items, value)
+		}
+		if list.Len() == 0 {
+			db.DeleteList(key)
+		}
+		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+		return nil
+	}
+
+	// Single element, return bulk string
 	value, ok := list.RightPop()
 	if !ok {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
