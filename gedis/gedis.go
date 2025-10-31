@@ -11,6 +11,7 @@ type Instance struct {
 	cmdBuf *circular[*Command]
 	stop   chan struct{}
 	dbs    []*database
+	round  int
 }
 
 func NewInstance(cap int) *Instance {
@@ -18,6 +19,7 @@ func NewInstance(cap int) *Instance {
 		cmdBuf: newBuffer[*Command](cap),
 		stop:   make(chan struct{}, 1),
 		dbs:    make([]*database, 16),
+		round:  0,
 	}
 }
 
@@ -32,16 +34,28 @@ func (i *Instance) Run(ctx context.Context) error {
 				log.Printf("gedis core stopping")
 				return
 			default:
-				if cmd, ok := i.cmdBuf.Read(); ok {
-					log.Printf("command received, type '%s', addr=%s", cmd.Cmd.Cmd, cmd.Addr)
-					i.processCmd(cmd)
-				} else {
-					time.Sleep(10 * time.Millisecond)
-				}
+				i.loop(ctx)
 			}
 		}
 	}()
 	return ctx.Err()
+}
+
+func (i *Instance) loop(_ context.Context) {
+	dbi := i.dbs[i.round%len(i.dbs)]
+	if dbi != nil {
+		dbi.EvictHashMap()
+	}
+
+	cmds := i.cmdBuf.ReadBatch(10)
+	for _, cmd := range cmds {
+		log.Printf("command received, type '%s', addr=%s", cmd.Cmd.Cmd, cmd.Addr)
+		i.processCmd(cmd)
+	}
+	if len(cmds) == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	i.round += 1
 }
 
 func (i *Instance) initDb(idx int) error {

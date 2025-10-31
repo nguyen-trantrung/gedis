@@ -18,12 +18,11 @@ type Command struct {
 	done     chan bool
 }
 
-func NewCommand(cmd resp.Command, addr string) *Command {
-	z := 0
+func NewCommand(cmd resp.Command, addr string, dbNumber int) *Command {
 	return &Command{
 		Cmd:      cmd,
 		Addr:     addr,
-		DbNumber: &z,
+		DbNumber: &dbNumber,
 		done:     make(chan bool, 1),
 	}
 }

@@ -75,3 +75,32 @@ func (c *circular[D]) read() (D, bool) {
 	}
 	return d, true
 }
+
+func (c *circular[D]) ReadBatch(n int) []D {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.size == 0 {
+		return nil
+	}
+
+	batchSize := n
+	if batchSize > c.size {
+		batchSize = c.size
+	}
+
+	batch := make([]D, 0, batchSize)
+	for i := 0; i < batchSize; i++ {
+		d := c.data[c.head]
+		batch = append(batch, d)
+		c.head = (c.head + 1) % c.cap
+		c.size -= 1
+	}
+
+	select {
+	case c.signal <- struct{}{}:
+	default:
+	}
+
+	return batch
+}
