@@ -83,7 +83,7 @@ func (s *scanner) nextLine() (*line, error) {
 
 func (s *line) scanToken() (Token, error) {
 	if len(s.l) == 0 {
-		return Token{}, io.EOF
+		return Token{}, fmt.Errorf("%w: empty line", ErrProtocolError)
 	}
 	t := s.next()
 	switch t {
@@ -105,7 +105,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.Atoi(str)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid integer value: %v", str)
+			return Token{}, fmt.Errorf("%w: invalid integer value: %v", ErrInvalidToken, str)
 		}
 		return Token{
 			Type:    TokenTypeInteger,
@@ -116,7 +116,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.Atoi(str)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid size value: %v", err)
+			return Token{}, fmt.Errorf("%w: invalid size value: %v", ErrInvalidToken, err)
 		}
 		return Token{
 			Type:    TokenTypeBulkString,
@@ -127,7 +127,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.Atoi(str)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid size value: %v", err)
+			return Token{}, fmt.Errorf("%w: invalid size value: %v", ErrInvalidToken, err)
 		}
 		return Token{
 			Type:    TokenTypeArray,
@@ -136,7 +136,7 @@ func (s *line) scanToken() (Token, error) {
 			Size:    1 + len(str)}, nil
 	case '_':
 		if !s.isEnd() {
-			return Token{}, fmt.Errorf("invalid nil syntax")
+			return Token{}, fmt.Errorf("%w: invalid nil syntax", ErrInvalidToken)
 		}
 		return Token{
 			Type:    TokenTypeNull,
@@ -152,7 +152,7 @@ func (s *line) scanToken() (Token, error) {
 		case "f":
 			b = false
 		default:
-			return Token{}, fmt.Errorf("invalid boolean value: %v", str)
+			return Token{}, fmt.Errorf("%w: invalid boolean value: %v", ErrInvalidToken, str)
 		}
 		return Token{
 			Type:    TokenTypeBoolean,
@@ -163,7 +163,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.ParseFloat(str, 64)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid size value: %v", err)
+			return Token{}, fmt.Errorf("%w: invalid size value: %v", ErrInvalidToken, err)
 		}
 		return Token{
 			Type:    TokenTypeDouble,
@@ -175,7 +175,7 @@ func (s *line) scanToken() (Token, error) {
 		num := new(big.Int)
 		_, ok := num.SetString(str, 10)
 		if !ok {
-			return Token{}, fmt.Errorf("invalid big integer")
+			return Token{}, fmt.Errorf("%w: invalid big integer", ErrInvalidToken)
 		}
 		return Token{
 			Type:    TokenTypeBigNumber,
@@ -186,7 +186,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.Atoi(str)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid size value: %v", err)
+			return Token{}, fmt.Errorf("%w: invalid size value: %v", ErrInvalidToken, err)
 		}
 		return Token{
 			Type:    TokenTypeBulkError,
@@ -197,7 +197,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.Atoi(str)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid size value: %v", err)
+			return Token{}, fmt.Errorf("%w: invalid size value: %v", ErrInvalidToken, err)
 		}
 		return Token{
 			Type:    TokenTypeVerbatimString,
@@ -208,7 +208,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.Atoi(str)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid size value: %v", err)
+			return Token{}, fmt.Errorf("%w: invalid size value: %v", ErrInvalidToken, err)
 		}
 		return Token{
 			Type:    TokenTypeMap,
@@ -219,7 +219,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.Atoi(str)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid size value: %v", err)
+			return Token{}, fmt.Errorf("%w: invalid size value: %v", ErrInvalidToken, err)
 		}
 		return Token{
 			Type:    TokenTypeAttributes,
@@ -230,7 +230,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.Atoi(str)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid size value: %v", err)
+			return Token{}, fmt.Errorf("%w: invalid size value: %v", ErrInvalidToken, err)
 		}
 		return Token{
 			Type:    TokenTypeSet,
@@ -241,7 +241,7 @@ func (s *line) scanToken() (Token, error) {
 		str := string(s.l[s.curr:])
 		data, err := strconv.Atoi(str)
 		if err != nil {
-			return Token{}, fmt.Errorf("invalid size value: %v", err)
+			return Token{}, fmt.Errorf("%w: invalid size value: %v", ErrInvalidToken, err)
 		}
 		return Token{
 			Type:    TokenTypePush,

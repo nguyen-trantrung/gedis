@@ -5,8 +5,8 @@ import (
 	"sync"
 )
 
-type circular struct {
-	data   []RespondableCmd
+type circular[D any] struct {
+	data   []D
 	head   int
 	tail   int
 	size   int
@@ -15,23 +15,23 @@ type circular struct {
 	mu     sync.Mutex
 }
 
-func newBuffer(cap int) *circular {
-	return &circular{
-		data:   make([]RespondableCmd, cap),
+func newBuffer[D any](cap int) *circular[D] {
+	return &circular[D]{
+		data:   make([]D, cap),
 		cap:    cap,
 		signal: make(chan struct{}, 1),
 	}
 }
 
-func (c *circular) Send(ctx context.Context, cmd RespondableCmd) {
-	c.send(ctx, []RespondableCmd{cmd})
+func (c *circular[D]) Send(ctx context.Context, cmd D) {
+	c.send(ctx, []D{cmd})
 }
 
-func (c *circular) MultiSend(ctx context.Context, cmds []RespondableCmd) {
+func (c *circular[D]) MultiSend(ctx context.Context, cmds []D) {
 	c.send(ctx, cmds)
 }
 
-func (c *circular) send(ctx context.Context, cmds []RespondableCmd) {
+func (c *circular[D]) send(ctx context.Context, cmds []D) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -52,16 +52,18 @@ func (c *circular) send(ctx context.Context, cmds []RespondableCmd) {
 	}
 }
 
-func (c *circular) Read() (RespondableCmd, bool) {
+func (c *circular[D]) Read() (D, bool) {
 	return c.read()
 }
 
-func (c *circular) read() (RespondableCmd, bool) {
+func (c *circular[D]) read() (D, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	var empty D
+
 	if c.size == 0 {
-		return RespondableCmd{}, false
+		return empty, false
 	}
 
 	d := c.data[c.head]

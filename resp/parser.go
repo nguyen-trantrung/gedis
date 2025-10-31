@@ -2,13 +2,16 @@ package resp
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"strings"
 )
 
 var ErrInvalidToken = fmt.Errorf("invalid token")
+var ErrProtocolError = fmt.Errorf("protocol error")
 
 // ParseTokens allows parsing a list of tokens which can include
 // multiple commands at once.
@@ -40,10 +43,12 @@ func (p *parser) parseCmds() ([]Command, error) {
 	cmds := make([]Command, 0)
 	for {
 		cmd, err := p.parseCmd()
-		if err == io.EOF {
-			break
-		} else if err != nil {
-			return nil, err
+		if err != nil {
+			if errors.Is(err, ErrInvalidToken) || errors.Is(err, ErrProtocolError) {
+				return nil, err
+			} else {
+				break
+			}
 		}
 		cmds = append(cmds, cmd)
 	}
@@ -53,29 +58,33 @@ func (p *parser) parseCmds() ([]Command, error) {
 func (p *parser) parseCmd() (Command, error) {
 	curr, err := p.Peek()
 	if err != nil {
-		return Command{}, err
+		var opErr *net.OpError
+		if err == io.EOF || errors.As(err, &opErr) {
+			return Command{}, err
+		}
+		return Command{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
 
 	switch curr.Type {
 	case TokenTypeArray:
 		d, err := p.parse()
 		if err != nil {
-			return Command{}, err
+			return Command{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 		cmd, err := NewCommand(d.(Array))
 		if err != nil {
-			return Command{}, err
+			return Command{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 		return cmd, nil
 	case TokenTypeValue:
 		cmd, err := p.parseInline(curr.Literal)
 		if err != nil {
-			return Command{}, err
+			return Command{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 		p.Next()
 		return cmd, nil
 	default:
-		return Command{}, fmt.Errorf("invalid starting token: %v", curr.Type)
+		return Command{}, fmt.Errorf("%w: invalid starting token: %v", ErrInvalidToken, curr.Type)
 	}
 }
 
@@ -168,13 +177,16 @@ func (p *parser) parseBulkString(size int) (string, error) {
 		}
 		nt, err := p.Next()
 		if err != nil {
-			return "", err
+			if err == io.EOF {
+				return "", err
+			}
+			return "", fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 		sb.WriteString(nt.Literal)
 		i += 1
 	}
 	if sb.Len() > size {
-		return "", fmt.Errorf("invalid bulk string size, got %v but actually %v", sb.Len(), size)
+		return "", fmt.Errorf("%w: invalid bulk string size, got %v but actually %v", ErrInvalidToken, sb.Len(), size)
 	}
 
 	return sb.String(), nil
@@ -187,10 +199,13 @@ func (p *parser) parseVerbatimString(size int) (string, error) {
 	sb := strings.Builder{}
 	encl, err := p.Next()
 	if err != nil {
-		return "", err
+		if err == io.EOF {
+			return "", err
+		}
+		return "", fmt.Errorf("%w: %v", ErrInvalidToken, err)
 	}
 	if len(encl.Literal) < 4 {
-		return "", fmt.Errorf("invalid encoding header, data len smaller than 4")
+		return "", fmt.Errorf("%w: invalid encoding header, data len smaller than 4", ErrInvalidToken)
 	}
 	enc, ld := encl.Literal[:3], encl.Literal[4:]
 	if enc == "txt" {
@@ -201,18 +216,21 @@ func (p *parser) parseVerbatimString(size int) (string, error) {
 			sb.WriteString("\r\n")
 			nt, err := p.Next()
 			if err != nil {
-				return "", err
+				if err == io.EOF {
+					return "", err
+				}
+				return "", fmt.Errorf("%w: %v", ErrInvalidToken, err)
 			}
 			sb.WriteString(nt.Literal)
 			i += 1
 		}
 		if sb.Len() > size {
-			return "", fmt.Errorf("invalid bulk string size, got %v but actually %v", sb.Len(), size)
+			return "", fmt.Errorf("%w: invalid bulk string size, got %v but actually %v", ErrInvalidToken, sb.Len(), size)
 		}
 
 		return sb.String(), nil
 	} else {
-		return "", fmt.Errorf("unsupported encoding: %v", enc)
+		return "", fmt.Errorf("%w: unsupported encoding: %v", ErrInvalidToken, enc)
 	}
 }
 
@@ -229,7 +247,7 @@ func (p *parser) parseArray(n int) (Array, error) {
 	for range n {
 		it, err := p.parse()
 		if err != nil {
-			return Array{}, err
+			return Array{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 		arr.Items = append(arr.Items, it)
 	}
@@ -242,7 +260,7 @@ func (p *parser) parseMap(n int) (Map, error) {
 	for range n {
 		k, v, err := p.parseMapEntry()
 		if err != nil {
-			return Map{}, err
+			return Map{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 		m.Items[k] = v
 	}
@@ -253,11 +271,11 @@ func (p *parser) parseMap(n int) (Map, error) {
 func (p *parser) parseMapEntry() (any, any, error) {
 	key, err := p.parse()
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid map key: %w", err)
+		return nil, nil, fmt.Errorf("%w: invalid map key: %v", ErrInvalidToken, err)
 	}
 	val, err := p.parse()
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid map value: %w", err)
+		return nil, nil, fmt.Errorf("%w: invalid map value: %v", ErrInvalidToken, err)
 	}
 	return key, val, nil
 }
@@ -267,7 +285,7 @@ func (p *parser) parseSet(n int) (Set, error) {
 	for range n {
 		it, err := p.parse()
 		if err != nil {
-			return Set{}, nil
+			return Set{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 		s.Items[it] = struct{}{}
 	}
@@ -326,40 +344,30 @@ func (p *streamIter) Next() (Token, error) {
 		p.lastToken = nil
 		return tok, nil
 	}
-	for {
-		l, err := p.sc.nextLine()
-		if err != nil {
-			return Token{}, err
-		}
-		tok, err := l.scanToken()
-		if err == io.EOF {
-			continue
-		}
-		if err != nil {
-			return Token{}, err
-		}
-		return tok, nil
+	l, err := p.sc.nextLine()
+	if err != nil {
+		return Token{}, err
 	}
+	tok, err := l.scanToken()
+	if err != nil {
+		return Token{}, err
+	}
+	return tok, nil
 }
 
 func (p *streamIter) Peek() (Token, error) {
 	if p.lastToken != nil {
 		return *p.lastToken, nil
 	}
-	for {
-		l, err := p.sc.nextLine()
-		if err != nil {
-			return Token{}, err
-		}
-		tok, err := l.scanToken()
-		if err == io.EOF {
-			continue
-		}
-		if err != nil {
-			return Token{}, err
-		}
-		p.lastToken = new(Token)
-		*p.lastToken = tok
-		return tok, nil
+	l, err := p.sc.nextLine()
+	if err != nil {
+		return Token{}, err
 	}
+	tok, err := l.scanToken()
+	if err != nil {
+		return Token{}, err
+	}
+	p.lastToken = new(Token)
+	*p.lastToken = tok
+	return tok, nil
 }
