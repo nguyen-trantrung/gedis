@@ -61,15 +61,54 @@ func handleSelect(db *database, cmd *Command) error {
 	return nil
 }
 
+func checkExpiry(args []any) (int, bool, error) {
+	if len(args) == 0 {
+		return -1, false, nil
+	}
+	if len(args) < 2 {
+		return -1, false, fmt.Errorf("%w: missing TTL duration", ErrInvalidArguments)
+	}
+
+	typeStr, ok := args[0].(resp.BulkStr)
+	if !ok {
+		return -1, false, fmt.Errorf("%w: TTL modifier must be string: %v", ErrInvalidArguments, args[0])
+	}
+
+	ttlStr, ok := args[1].(resp.BulkStr)
+	if !ok {
+		return -1, false, fmt.Errorf("%w: TTL must be integer: %v", ErrInvalidArguments, args[1])
+	}
+
+	ttl, err := strconv.Atoi(ttlStr.Value)
+	if err != nil {
+		return -1, false, fmt.Errorf("%w: TTL must be integer: %v", ErrInvalidArguments, ttlStr)
+	}
+	var mod = 1
+	switch strings.ToLower(typeStr.Value) {
+	case "ex":
+		mod = 1000
+	case "px":
+		mod = 1
+	default:
+		return -1, false, fmt.Errorf("%w: unknown TTL modifier: %v", ErrInvalidArguments, args[0])
+	}
+
+	return ttl * mod, true, nil
+}
+
 func handleSet(db *database, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
-		return fmt.Errorf("%w: not enough argu◊ments", ErrInvalidArguments)
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
-	defer cmd.SetDone()
 	key := args[0]
 	value := args[1]
-	db.HashMap().Set(key, value, -1)
+	ttl, _, err := checkExpiry(args[2:])
+	if err != nil {
+		return err
+	}
+	defer cmd.SetDone()
+	db.HashMap().Set(key, value, ttl)
 	cmd.WriteAny("OK")
 	return nil
 }
@@ -77,7 +116,7 @@ func handleSet(db *database, cmd *Command) error {
 func handleGet(db *database, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
-		return fmt.Errorf("%w: not enough argu◊ments", ErrInvalidArguments)
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
 	key := args[0]
