@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"strconv"
@@ -186,8 +187,9 @@ func (s *Server) handleProtoError(err error, conn net.Conn) (brk bool, cont bool
 	if err == nil {
 		return true, true
 	}
-	if errors.Is(err, net.ErrClosed) {
-		return true, false
+	if err == io.EOF {
+		log.Printf("client disconnected, addr=%s", conn.RemoteAddr())
+		return false, false
 	}
 	if errors.Is(err, resp.ErrProtocolError) || errors.Is(err, resp.ErrInvalidToken) {
 		log.Printf("client sent invalid command, err=%s", err)
