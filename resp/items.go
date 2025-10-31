@@ -30,6 +30,11 @@ type Err struct {
 	Value string
 }
 
+type BulkStr struct {
+	Size  int
+	Value string
+}
+
 func NewErr(err error) Err {
 	msg := err.Error()
 	return Err{Size: len(msg), Value: msg}
@@ -129,6 +134,15 @@ func (e *Err) WriteTo(w io.Writer) (n int64, err error) {
 	return n, bs.Flush()
 }
 
+func (e *BulkStr) WriteTo(w io.Writer) (n int64, err error) {
+	header := fmt.Sprintf("$%d\r\n%s\r\n", e.Size, e.Value)
+	if _, err := w.Write([]byte(header)); err != nil {
+		return n, err
+	}
+	n += int64(len(header))
+	return n, nil
+}
+
 func WriteAnyTo(data any, out io.Writer) (n int64, err error) {
 	if writer, ok := data.(io.WriterTo); ok {
 		return writer.WriteTo(out)
@@ -146,6 +160,8 @@ func WriteAnyTo(data any, out io.Writer) (n int64, err error) {
 	case Attrb:
 		return val.WriteTo(out)
 	case Map:
+		return val.WriteTo(out)
+	case BulkStr:
 		return val.WriteTo(out)
 	case int, int8, int16, int32, int64:
 		header := fmt.Sprintf(":%d\r\n", val)
@@ -176,7 +192,7 @@ func WriteAnyTo(data any, out io.Writer) (n int64, err error) {
 		}
 		n += int64(len(header))
 	case string:
-		header := fmt.Sprintf("$%d\r\n%s\r\n", len(val), val)
+		header := fmt.Sprintf("+%s\r\n", val)
 		if _, err := out.Write([]byte(header)); err != nil {
 			return n, err
 		}

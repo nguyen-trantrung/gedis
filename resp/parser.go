@@ -111,7 +111,7 @@ func (p *parser) parse() (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		return str, nil
+		return BulkStr{Size: len(str), Value: str}, nil
 	case TokenTypeNull:
 		return nil, nil
 	case TokenTypeBoolean:

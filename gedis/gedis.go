@@ -66,11 +66,13 @@ func (i *Instance) processCmd(cmd *Command) {
 	hdl, err := selectHandler(cmd)
 	if err != nil {
 		cmd.WriteAny(err)
+		cmd.SetDone()
 		return
 	}
 
 	if err := hdl(dbi, cmd); err != nil {
 		cmd.WriteAny(err)
+		cmd.SetDone()
 		return
 	}
 }
