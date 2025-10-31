@@ -11,6 +11,7 @@ type Handler func(db *database, cmd *Command) error
 
 var hmap = map[string]Handler{
 	"ping": handlePing,
+	"echo": handleEcho,
 }
 
 func selectHandler(cmd *Command) (Handler, error) {
@@ -24,7 +25,14 @@ func selectHandler(cmd *Command) (Handler, error) {
 
 func handlePing(db *database, cmd *Command) error {
 	defer cmd.SetDone()
-
 	cmd.WriteAny("PONG")
+	return nil
+}
+
+func handleEcho(db *database, cmd *Command) error {
+	defer cmd.SetDone()
+	for _, arg := range cmd.Cmd.Args {
+		cmd.WriteAny(arg)
+	}
 	return nil
 }
