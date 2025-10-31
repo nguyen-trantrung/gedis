@@ -18,6 +18,13 @@ var hmap = map[string]Handler{
 	"select": handleSelect,
 	"set":    handleSet,
 	"get":    handleGet,
+	"rpush":  handleRPush,
+	"lpush":  handleLPush,
+	"lpop":   handleLPop,
+	"rpop":   handleRPop,
+	"lrange": handleLRange,
+	"llen":   handleLLen,
+	"lindex": handleLIndex,
 }
 
 func selectHandler(cmd *Command) (Handler, error) {
@@ -121,6 +128,169 @@ func handleGet(db *database, cmd *Command) error {
 	defer cmd.SetDone()
 	key := args[0]
 	value, ok := db.HashMap().Get(key)
+	if !ok {
+		cmd.WriteAny(resp.BulkStr{Size: -1})
+		return nil
+	}
+	cmd.WriteAny(value)
+	return nil
+}
+
+func handleRPush(db *database, cmd *Command) error {
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+	key := args[0]
+	list := db.GetOrCreateList(key)
+	for _, value := range args[1:] {
+		list.RightPush(value)
+	}
+	cmd.WriteAny(list.Len())
+	return nil
+}
+
+func handleLPush(db *database, cmd *Command) error {
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+	key := args[0]
+	list := db.GetOrCreateList(key)
+	for _, value := range args[1:] {
+		list.LeftPush(value)
+	}
+	cmd.WriteAny(list.Len())
+	return nil
+}
+
+func handleLPop(db *database, cmd *Command) error {
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+	key := args[0]
+	list, exists := db.GetList(key)
+	if !exists {
+		cmd.WriteAny(resp.BulkStr{Size: -1})
+		return nil
+	}
+	value, ok := list.LeftPop()
+	if !ok {
+		cmd.WriteAny(resp.BulkStr{Size: -1})
+		return nil
+	}
+	if list.Len() == 0 {
+		db.DeleteList(key)
+	}
+	cmd.WriteAny(value)
+	return nil
+}
+
+func handleRPop(db *database, cmd *Command) error {
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+	key := args[0]
+	list, exists := db.GetList(key)
+	if !exists {
+		cmd.WriteAny(resp.BulkStr{Size: -1})
+		return nil
+	}
+	value, ok := list.RightPop()
+	if !ok {
+		cmd.WriteAny(resp.BulkStr{Size: -1})
+		return nil
+	}
+	if list.Len() == 0 {
+		db.DeleteList(key)
+	}
+	cmd.WriteAny(value)
+	return nil
+}
+
+func handleLRange(db *database, cmd *Command) error {
+	args := cmd.Cmd.Args
+	if len(args) < 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+	key := args[0]
+
+	startStr, ok := args[1].(resp.BulkStr)
+	if !ok {
+		return fmt.Errorf("%w: start must be integer", ErrInvalidArguments)
+	}
+	start, err := strconv.Atoi(startStr.Value)
+	if err != nil {
+		return fmt.Errorf("%w: start must be integer", ErrInvalidArguments)
+	}
+
+	stopStr, ok := args[2].(resp.BulkStr)
+	if !ok {
+		return fmt.Errorf("%w: stop must be integer", ErrInvalidArguments)
+	}
+	stop, err := strconv.Atoi(stopStr.Value)
+	if err != nil {
+		return fmt.Errorf("%w: stop must be integer", ErrInvalidArguments)
+	}
+
+	list, exists := db.GetList(key)
+	if !exists {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	items := list.LeftRange(start, stop)
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	return nil
+}
+
+func handleLLen(db *database, cmd *Command) error {
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+	key := args[0]
+	list, exists := db.GetList(key)
+	if !exists {
+		cmd.WriteAny(0)
+		return nil
+	}
+	cmd.WriteAny(list.Len())
+	return nil
+}
+
+func handleLIndex(db *database, cmd *Command) error {
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+	key := args[0]
+
+	indexStr, ok := args[1].(resp.BulkStr)
+	if !ok {
+		return fmt.Errorf("%w: index must be integer", ErrInvalidArguments)
+	}
+	index, err := strconv.Atoi(indexStr.Value)
+	if err != nil {
+		return fmt.Errorf("%w: index must be integer", ErrInvalidArguments)
+	}
+
+	list, exists := db.GetList(key)
+	if !exists {
+		cmd.WriteAny(resp.BulkStr{Size: -1})
+		return nil
+	}
+
+	value, ok := list.LeftIndex(index)
 	if !ok {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
