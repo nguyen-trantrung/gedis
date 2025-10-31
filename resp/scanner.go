@@ -49,7 +49,9 @@ func (s *scanner) scanLines() ([]Token, error) {
 			return nil, err
 		}
 		t, err := l.scanToken()
-		if err != nil {
+		if err == io.EOF {
+			continue
+		} else if err != nil {
 			return nil, err
 		}
 		tokens = append(tokens, t)
@@ -80,6 +82,9 @@ func (s *scanner) nextLine() (*line, error) {
 }
 
 func (s *line) scanToken() (Token, error) {
+	if len(s.l) == 0 {
+		return Token{}, io.EOF
+	}
 	t := s.next()
 	switch t {
 	case '+':
@@ -259,8 +264,9 @@ func (s *line) isEnd() bool {
 }
 
 func (s *line) next() byte {
-	if !s.isEnd() {
-		s.curr += 1
+	if s.isEnd() {
+		return 0
 	}
+	s.curr += 1
 	return s.l[s.curr-1]
 }

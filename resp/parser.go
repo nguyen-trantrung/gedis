@@ -42,6 +42,8 @@ func (p *parser) parseCmds() ([]Command, error) {
 		cmd, err := p.parseCmd()
 		if err == io.EOF {
 			break
+		} else if err != nil {
+			return nil, err
 		}
 		cmds = append(cmds, cmd)
 	}
@@ -324,30 +326,40 @@ func (p *streamIter) Next() (Token, error) {
 		p.lastToken = nil
 		return tok, nil
 	}
-	l, err := p.sc.nextLine()
-	if err != nil {
-		return Token{}, err
+	for {
+		l, err := p.sc.nextLine()
+		if err != nil {
+			return Token{}, err
+		}
+		tok, err := l.scanToken()
+		if err == io.EOF {
+			continue
+		}
+		if err != nil {
+			return Token{}, err
+		}
+		return tok, nil
 	}
-	tok, err := l.scanToken()
-	if err != nil {
-		return Token{}, err
-	}
-	return tok, nil
 }
 
 func (p *streamIter) Peek() (Token, error) {
 	if p.lastToken != nil {
 		return *p.lastToken, nil
 	}
-	l, err := p.sc.nextLine()
-	if err != nil {
-		return Token{}, err
+	for {
+		l, err := p.sc.nextLine()
+		if err != nil {
+			return Token{}, err
+		}
+		tok, err := l.scanToken()
+		if err == io.EOF {
+			continue
+		}
+		if err != nil {
+			return Token{}, err
+		}
+		p.lastToken = new(Token)
+		*p.lastToken = tok
+		return tok, nil
 	}
-	tok, err := l.scanToken()
-	if err != nil {
-		return Token{}, err
-	}
-	p.lastToken = new(Token)
-	*p.lastToken = tok
-	return tok, nil
 }
