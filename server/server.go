@@ -98,10 +98,8 @@ type connState struct {
 }
 
 func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
-	defer conn.Close()
 	log.Printf("connection established, addr=%s", conn.RemoteAddr())
 	ctx, cancel := context.WithCancel(baseCtx)
-	defer cancel()
 
 	state := &connState{pending: make([]*gedis.Command, 0)}
 
@@ -110,6 +108,7 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 
 	go func() {
 		<-ctx.Done()
+		wg.Wait()
 		conn.Close()
 	}()
 
@@ -180,7 +179,6 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 		}
 	}()
 
-	wg.Wait()
 }
 
 func (s *Server) handleProtoError(err error, conn net.Conn) (brk bool, cont bool) {
