@@ -460,7 +460,7 @@ func handleIncr(db *database, cmd *Command) error {
 	case resp.BulkStr, string:
 		num, err := parseInt(val)
 		if err != nil {
-			return fmt.Errorf("%w: value is not an integer or out of range", ErrInvalidArguments)
+			return fmt.Errorf("value is not an integer or out of range")
 		}
 		num += 1
 		numStr := fmt.Sprintf("%d", num)
@@ -468,7 +468,7 @@ func handleIncr(db *database, cmd *Command) error {
 		cmd.WriteAny(num)
 	default:
 		// TODO: Change this if later we support integer/float value types
-		return fmt.Errorf("%w: value is not an integer or out of range", ErrInvalidArguments)
+		return fmt.Errorf("value is not an integer or out of range")
 	}
 
 	return nil
