@@ -17,7 +17,7 @@ type Command struct {
 	out            *bytes.Buffer
 	done           bool
 	timedOut       time.Time
-	defTimedOutOut []byte
+	defTimedOutOut any
 }
 
 func NewCommand(cmd resp.Command, addr string, dbNumber int) *Command {
@@ -54,7 +54,7 @@ func (c *Command) SetOutput(data Bytes) {
 	c.out = bytes.NewBuffer(data)
 }
 
-func (c *Command) SetDefaultTimeoutOutput(data Bytes) {
+func (c *Command) SetDefaultTimeoutOutput(data any) {
 	c.defTimedOutOut = data
 }
 
@@ -99,8 +99,7 @@ func (c *Command) Bytes() Bytes {
 func (c *Command) WriteTo(str io.Writer) (n int64, err error) {
 	if c.out == nil {
 		if c.HasTimedOut() {
-			nint, err := str.Write(c.defTimedOutOut)
-			return int64(nint), err
+			return resp.WriteAnyTo(c.defTimedOutOut, str)
 		}
 
 		return 0, nil

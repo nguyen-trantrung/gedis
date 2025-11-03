@@ -35,6 +35,18 @@ func parseInt(arg any) (int, error) {
 	return val, nil
 }
 
+func parseFloat(arg any) (float64, error) {
+	bulkStr, ok := arg.(resp.BulkStr)
+	if !ok {
+		return 0, fmt.Errorf("%w: expected integer, got %T", ErrInvalidArguments, arg)
+	}
+	val, err := strconv.ParseFloat(bulkStr.Value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%w: invalid float value", ErrInvalidArguments)
+	}
+	return val, nil
+}
+
 var hmap = map[string]Handler{
 	"ping":   handlePing,
 	"echo":   handleEcho,
@@ -391,13 +403,13 @@ func handleBlockLpop(db *database, cmd *Command) error {
 
 	key := args[0]
 
-	timeout, err := parseInt(args[1])
+	timeout, err := parseFloat(args[1])
 	if err != nil {
-		cmd.WriteAny(err)
-		return nil
+		return err
 	}
 	if timeout != 0 {
 		cmd.SetTimeout(time.Now().Add(time.Duration(timeout) * time.Second))
+		cmd.SetDefaultTimeoutOutput(resp.Array{Size: -1})
 	}
 
 	ok := resolveBlockLpop(db, key, cmd)

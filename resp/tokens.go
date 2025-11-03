@@ -63,7 +63,7 @@ func (t TokenType) String() string {
 
 type Token struct {
 	Type    TokenType
-	Value   interface{}
+	Value   any
 	Literal string
 	Size    int
 }
