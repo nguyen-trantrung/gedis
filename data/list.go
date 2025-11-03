@@ -21,6 +21,10 @@ func NewLinkedList() *LinkedList {
 }
 
 func (l *LinkedList) LeftPush(value any) {
+	l.lpush(value)
+}
+
+func (l *LinkedList) lpush(value any) {
 	n := &node{value: value, prev: nil, next: l.head}
 	if l.head != nil {
 		l.head.prev = n
@@ -33,6 +37,10 @@ func (l *LinkedList) LeftPush(value any) {
 }
 
 func (l *LinkedList) RightPush(value any) {
+	l.rpush(value)
+}
+
+func (l *LinkedList) rpush(value any) {
 	n := &node{value: value, prev: l.tail, next: nil}
 	if l.tail != nil {
 		l.tail.next = n
@@ -45,6 +53,10 @@ func (l *LinkedList) RightPush(value any) {
 }
 
 func (l *LinkedList) LeftPop() (any, bool) {
+	return l.lpop()
+}
+
+func (l *LinkedList) lpop() (any, bool) {
 	if l.head == nil {
 		return nil, false
 	}
@@ -60,6 +72,10 @@ func (l *LinkedList) LeftPop() (any, bool) {
 }
 
 func (l *LinkedList) RightPop() (any, bool) {
+	return l.rpop()
+}
+
+func (l *LinkedList) rpop() (any, bool) {
 	if l.tail == nil {
 		return nil, false
 	}
@@ -75,6 +91,10 @@ func (l *LinkedList) RightPop() (any, bool) {
 }
 
 func (l *LinkedList) LeftRange(start, stop int) []any {
+	return l.lrange(start, stop)
+}
+
+func (l *LinkedList) lrange(start, stop int) []any {
 	if start < 0 {
 		start = l.size + start
 	}
@@ -112,6 +132,10 @@ func (l *LinkedList) Len() int {
 }
 
 func (l *LinkedList) LeftIndex(index int) (any, bool) {
+	return l.leftIndex(index)
+}
+
+func (l *LinkedList) leftIndex(index int) (any, bool) {
 	if index < 0 {
 		index = l.size + index
 	}

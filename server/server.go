@@ -162,8 +162,7 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 
 			state.mu.Lock()
 			if len(state.pending) > 0 {
-				select {
-				case <-state.pending[0].Done():
+				if state.pending[0].IsDone() || state.pending[0].HasTimedOut() {
 					cmd := state.pending[0]
 					respn, err := cmd.WriteTo(conn)
 					if err != nil {
@@ -175,7 +174,6 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 						state.dbNumber = *cmd.DbNumber
 					}
 					state.pending = state.pending[1:]
-				default:
 				}
 			}
 			state.mu.Unlock()

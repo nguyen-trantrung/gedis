@@ -84,10 +84,7 @@ func (c *circular[D]) ReadBatch(n int) []D {
 		return nil
 	}
 
-	batchSize := n
-	if batchSize > c.size {
-		batchSize = c.size
-	}
+	batchSize := min(n, c.size)
 
 	batch := make([]D, 0, batchSize)
 	for i := 0; i < batchSize; i++ {

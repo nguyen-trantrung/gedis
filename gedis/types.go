@@ -3,7 +3,7 @@ package gedis
 import (
 	"bytes"
 	"io"
-	"log"
+	"time"
 
 	"github.com/ttn-nguyen42/gedis/resp"
 )
@@ -11,28 +11,39 @@ import (
 type Bytes []byte
 
 type Command struct {
-	Cmd      resp.Command
-	Addr     string
-	DbNumber *int
-	out      *bytes.Buffer
-	done     chan bool
+	Cmd            resp.Command
+	Addr           string
+	DbNumber       *int
+	out            *bytes.Buffer
+	done           bool
+	timedOut       time.Time
+	defTimedOutOut []byte
 }
 
 func NewCommand(cmd resp.Command, addr string, dbNumber int) *Command {
 	return &Command{
-		Cmd:      cmd,
-		Addr:     addr,
-		DbNumber: &dbNumber,
-		done:     make(chan bool, 1),
+		Cmd:            cmd,
+		Addr:           addr,
+		DbNumber:       &dbNumber,
+		done:           false,
+		defTimedOutOut: nil,
 	}
 }
 
 func (c *Command) SetDone() {
-	c.done <- true
+	c.done = true
 }
 
-func (c *Command) Done() <-chan bool {
+func (c *Command) IsDone() bool {
 	return c.done
+}
+
+func (c *Command) SetTimeout(t time.Time) {
+	c.timedOut = t
+}
+
+func (c *Command) HasTimedOut() bool {
+	return !c.timedOut.IsZero() && c.timedOut.Before(time.Now())
 }
 
 func (c *Command) SelectDb(dbNum int) {
@@ -41,6 +52,10 @@ func (c *Command) SelectDb(dbNum int) {
 
 func (c *Command) SetOutput(data Bytes) {
 	c.out = bytes.NewBuffer(data)
+}
+
+func (c *Command) SetDefaultTimeoutOutput(data Bytes) {
+	c.defTimedOutOut = data
 }
 
 func (c *Command) initBuf(d []byte) bool {
@@ -55,7 +70,6 @@ func (c *Command) Write(d []byte) (n int, err error) {
 	if c.initBuf(d) {
 		return len(d), nil
 	}
-	log.Println("Good n=", len(d))
 	return c.out.Write(d)
 }
 
@@ -84,6 +98,11 @@ func (c *Command) Bytes() Bytes {
 
 func (c *Command) WriteTo(str io.Writer) (n int64, err error) {
 	if c.out == nil {
+		if c.HasTimedOut() {
+			nint, err := str.Write(c.defTimedOutOut)
+			return int64(nint), err
+		}
+
 		return 0, nil
 	}
 

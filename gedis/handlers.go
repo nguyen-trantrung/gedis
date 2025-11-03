@@ -2,8 +2,11 @@ package gedis
 
 import (
 	"fmt"
+	"log"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ttn-nguyen42/gedis/resp"
 )
@@ -11,6 +14,26 @@ import (
 var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
 
 type Handler func(db *database, cmd *Command) error
+
+func parseBulkStr(arg any) (string, error) {
+	bulkStr, ok := arg.(resp.BulkStr)
+	if !ok {
+		return "", fmt.Errorf("%w: expected bulk string, got %T", ErrInvalidArguments, arg)
+	}
+	return bulkStr.Value, nil
+}
+
+func parseInt(arg any) (int, error) {
+	bulkStr, ok := arg.(resp.BulkStr)
+	if !ok {
+		return 0, fmt.Errorf("%w: expected integer, got %T", ErrInvalidArguments, arg)
+	}
+	val, err := strconv.Atoi(bulkStr.Value)
+	if err != nil {
+		return 0, fmt.Errorf("%w: invalid integer value", ErrInvalidArguments)
+	}
+	return val, nil
+}
 
 var hmap = map[string]Handler{
 	"ping":   handlePing,
@@ -25,6 +48,7 @@ var hmap = map[string]Handler{
 	"lrange": handleLRange,
 	"llen":   handleLLen,
 	"lindex": handleLIndex,
+	"blpop":  handleBlockLpop,
 }
 
 func selectHandler(cmd *Command) (Handler, error) {
@@ -54,13 +78,9 @@ func handleSelect(db *database, cmd *Command) error {
 	if len(cmd.Cmd.Args) < 1 {
 		return fmt.Errorf("%w: missing database number", ErrInvalidArguments)
 	}
-	dbstr, isBulkStr := cmd.Cmd.Args[0].(resp.BulkStr)
-	if !isBulkStr {
-		return fmt.Errorf("%w: database number must be integer", ErrInvalidArguments)
-	}
-	dbn, err := strconv.Atoi(dbstr.Value)
+	dbn, err := parseInt(cmd.Cmd.Args[0])
 	if err != nil {
-		return fmt.Errorf("%w: database number must be integer", ErrInvalidArguments)
+		return err
 	}
 	defer cmd.SetDone()
 	cmd.SelectDb(dbn)
@@ -76,22 +96,18 @@ func checkExpiry(args []any) (int, bool, error) {
 		return -1, false, fmt.Errorf("%w: missing TTL duration", ErrInvalidArguments)
 	}
 
-	typeStr, ok := args[0].(resp.BulkStr)
-	if !ok {
-		return -1, false, fmt.Errorf("%w: TTL modifier must be string: %v", ErrInvalidArguments, args[0])
-	}
-
-	ttlStr, ok := args[1].(resp.BulkStr)
-	if !ok {
-		return -1, false, fmt.Errorf("%w: TTL must be integer: %v", ErrInvalidArguments, args[1])
-	}
-
-	ttl, err := strconv.Atoi(ttlStr.Value)
+	typeStr, err := parseBulkStr(args[0])
 	if err != nil {
-		return -1, false, fmt.Errorf("%w: TTL must be integer: %v", ErrInvalidArguments, ttlStr)
+		return -1, false, err
 	}
+
+	ttl, err := parseInt(args[1])
+	if err != nil {
+		return -1, false, err
+	}
+
 	var mod = 1
-	switch strings.ToLower(typeStr.Value) {
+	switch strings.ToLower(typeStr) {
 	case "ex":
 		mod = 1000
 	case "px":
@@ -148,6 +164,19 @@ func handleRPush(db *database, cmd *Command) error {
 		list.RightPush(value)
 	}
 	cmd.WriteAny(list.Len())
+
+	blkRequests, ok := db.block.blockLpop[key]
+	if !ok {
+		return nil
+	}
+
+	db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *Command) bool {
+		ok := resolveBlockLpop(db, key, req)
+		if ok {
+			log.Printf("resolved blpop request, listKey=%s", key)
+		}
+		return ok
+	})
 	return nil
 }
 
@@ -163,6 +192,19 @@ func handleLPush(db *database, cmd *Command) error {
 		list.LeftPush(value)
 	}
 	cmd.WriteAny(list.Len())
+
+	blkRequests, ok := db.block.blockLpop[key]
+	if !ok {
+		return nil
+	}
+
+	db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *Command) bool {
+		ok := resolveBlockLpop(db, key, req)
+		if ok {
+			log.Printf("resolved blpop request, listKey=%s", key)
+		}
+		return ok
+	})
 	return nil
 }
 
@@ -176,14 +218,10 @@ func handleLPop(db *database, cmd *Command) error {
 
 	count := 1
 	if len(args) >= 2 {
-		countStr, ok := args[1].(resp.BulkStr)
-		if !ok {
-			return fmt.Errorf("%w: count must be integer", ErrInvalidArguments)
-		}
 		var err error
-		count, err = strconv.Atoi(countStr.Value)
+		count, err = parseInt(args[1])
 		if err != nil {
-			return fmt.Errorf("%w: count must be integer", ErrInvalidArguments)
+			return err
 		}
 	}
 
@@ -195,7 +233,7 @@ func handleLPop(db *database, cmd *Command) error {
 
 	if len(args) >= 2 {
 		items := make([]any, 0, count)
-		for i := 0; i < count; i++ {
+		for i := 0; i < count; i += 1 {
 			value, ok := list.LeftPop()
 			if !ok {
 				break
@@ -231,14 +269,10 @@ func handleRPop(db *database, cmd *Command) error {
 
 	count := 1
 	if len(args) >= 2 {
-		countStr, ok := args[1].(resp.BulkStr)
-		if !ok {
-			return fmt.Errorf("%w: count must be integer", ErrInvalidArguments)
-		}
 		var err error
-		count, err = strconv.Atoi(countStr.Value)
+		count, err = parseInt(args[1])
 		if err != nil {
-			return fmt.Errorf("%w: count must be integer", ErrInvalidArguments)
+			return err
 		}
 	}
 
@@ -248,7 +282,6 @@ func handleRPop(db *database, cmd *Command) error {
 		return nil
 	}
 
-	// If count is specified, return array
 	if len(args) >= 2 {
 		items := make([]any, 0, count)
 		for i := 0; i < count; i++ {
@@ -265,7 +298,6 @@ func handleRPop(db *database, cmd *Command) error {
 		return nil
 	}
 
-	// Single element, return bulk string
 	value, ok := list.RightPop()
 	if !ok {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
@@ -286,22 +318,14 @@ func handleLRange(db *database, cmd *Command) error {
 	defer cmd.SetDone()
 	key := args[0]
 
-	startStr, ok := args[1].(resp.BulkStr)
-	if !ok {
-		return fmt.Errorf("%w: start must be integer", ErrInvalidArguments)
-	}
-	start, err := strconv.Atoi(startStr.Value)
+	start, err := parseInt(args[1])
 	if err != nil {
-		return fmt.Errorf("%w: start must be integer", ErrInvalidArguments)
+		return err
 	}
 
-	stopStr, ok := args[2].(resp.BulkStr)
-	if !ok {
-		return fmt.Errorf("%w: stop must be integer", ErrInvalidArguments)
-	}
-	stop, err := strconv.Atoi(stopStr.Value)
+	stop, err := parseInt(args[2])
 	if err != nil {
-		return fmt.Errorf("%w: stop must be integer", ErrInvalidArguments)
+		return err
 	}
 
 	list, exists := db.GetList(key)
@@ -339,13 +363,9 @@ func handleLIndex(db *database, cmd *Command) error {
 	defer cmd.SetDone()
 	key := args[0]
 
-	indexStr, ok := args[1].(resp.BulkStr)
-	if !ok {
-		return fmt.Errorf("%w: index must be integer", ErrInvalidArguments)
-	}
-	index, err := strconv.Atoi(indexStr.Value)
+	index, err := parseInt(args[1])
 	if err != nil {
-		return fmt.Errorf("%w: index must be integer", ErrInvalidArguments)
+		return err
 	}
 
 	list, exists := db.GetList(key)
@@ -361,4 +381,44 @@ func handleLIndex(db *database, cmd *Command) error {
 	}
 	cmd.WriteAny(value)
 	return nil
+}
+
+func handleBlockLpop(db *database, cmd *Command) error {
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key := args[0]
+
+	timeout, err := parseInt(args[1])
+	if err != nil {
+		cmd.WriteAny(err)
+		return nil
+	}
+	if timeout != 0 {
+		cmd.SetTimeout(time.Now().Add(time.Duration(timeout) * time.Second))
+	}
+
+	ok := resolveBlockLpop(db, key, cmd)
+	if !ok {
+		db.block.blockLpop[key] = append(db.block.blockLpop[key], cmd)
+	}
+	return nil
+}
+
+func resolveBlockLpop(db *database, key any, cmd *Command) (ok bool) {
+	list, exists := db.GetList(key)
+	if !exists {
+		return false
+	}
+
+	if list.Len() == 0 {
+		return false
+	}
+
+	defer cmd.SetDone()
+	pdata, _ := list.LeftPop()
+	cmd.WriteAny(resp.Array{Size: 2, Items: []any{key, pdata}})
+	return true
 }
