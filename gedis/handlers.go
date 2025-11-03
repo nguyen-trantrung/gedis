@@ -24,11 +24,17 @@ func parseBulkStr(arg any) (string, error) {
 }
 
 func parseInt(arg any) (int, error) {
+	var str string
 	bulkStr, ok := arg.(resp.BulkStr)
 	if !ok {
-		return 0, fmt.Errorf("%w: expected integer, got %T", ErrInvalidArguments, arg)
+		str, ok = arg.(string)
+		if !ok {
+			return 0, fmt.Errorf("%w: expected integer, got %T", ErrInvalidArguments, arg)
+		}
+	} else {
+		str = bulkStr.Value
 	}
-	val, err := strconv.Atoi(bulkStr.Value)
+	val, err := strconv.Atoi(str)
 	if err != nil {
 		return 0, fmt.Errorf("%w: invalid integer value", ErrInvalidArguments)
 	}
@@ -61,6 +67,7 @@ var hmap = map[string]Handler{
 	"llen":   handleLLen,
 	"lindex": handleLIndex,
 	"blpop":  handleBlockLpop,
+	"incr":   handleIncr,
 }
 
 func selectHandler(cmd *Command) (Handler, error) {
@@ -433,4 +440,37 @@ func resolveBlockLpop(db *database, key any, cmd *Command) (ok bool) {
 	pdata, _ := list.LeftPop()
 	cmd.WriteAny(resp.Array{Size: 2, Items: []any{key, pdata}})
 	return true
+}
+
+func handleIncr(db *database, cmd *Command) error {
+	args := cmd.Cmd.Args
+	if len(args) != 1 {
+		return fmt.Errorf("%w: requires exactly 1 argument", ErrInvalidArguments)
+	}
+	key := args[0]
+	defer cmd.SetDone()
+
+	val, ok := db.hm.Get(key)
+	if !ok {
+		db.HashMap().Set(key, resp.BulkStr{Size: 1, Value: "1"}, 0)
+		cmd.WriteAny(1)
+		return nil
+	}
+	switch val.(type) {
+	case resp.BulkStr, string:
+		num, err := parseInt(val)
+		if err != nil {
+			return fmt.Errorf("%w: value is not an integer or out of range", ErrInvalidArguments)
+		}
+		num += 1
+		numStr := fmt.Sprintf("%d", num)
+		db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
+	default:
+		// TODO: Change this if later we support integer/float value types
+		return fmt.Errorf("%w: value is not an integer or out of range", ErrInvalidArguments)
+	}
+
+	cmd.WriteAny("OK")
+
+	return nil
 }
