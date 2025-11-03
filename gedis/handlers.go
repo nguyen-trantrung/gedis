@@ -452,12 +452,17 @@ func handleBlockLpop(db *database, cmd *Command, conn *ConnState) error {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 
+	if checkInTx(cmd, conn) {
+		return nil
+	}
+
 	key := args[0]
 
 	timeout, err := parseFloat(args[1])
 	if err != nil {
 		return err
 	}
+
 	if timeout != 0 {
 		cmd.SetTimeout(time.Now().Add(time.Duration(timeout * float64(time.Second))))
 		cmd.SetDefaultTimeoutOutput(resp.Array{Size: -1})
@@ -576,10 +581,12 @@ func checkInTx(cmd *Command, conn *ConnState) bool {
 func handleDiscard(db *database, cmd *Command, conn *ConnState) error {
 	defer cmd.SetDone()
 
-	if !checkInTx(cmd, conn) {
+	if !conn.InTransaction {
 		return fmt.Errorf("DISCARD without MULTI")
 	}
-	conn.Tx = make([]*Command, 0)
 	cmd.WriteAny("OK")
+
+	conn.InTransaction = false
+	conn.Tx = make([]*Command, 0)
 	return nil
 }
