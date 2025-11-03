@@ -408,7 +408,7 @@ func handleBlockLpop(db *database, cmd *Command) error {
 		return err
 	}
 	if timeout != 0 {
-		cmd.SetTimeout(time.Now().Add(time.Duration(timeout) * time.Second))
+		cmd.SetTimeout(time.Now().Add(time.Duration(timeout * float64(time.Second))))
 		cmd.SetDefaultTimeoutOutput(resp.Array{Size: -1})
 	}
 
