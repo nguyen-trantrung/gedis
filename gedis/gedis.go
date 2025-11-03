@@ -70,10 +70,15 @@ func (i *Instance) initDb(idx int) error {
 
 func (i *Instance) processCmd(cmd *Command) {
 	idx := 0
-	if cmd.DbNumber != nil {
+	if cmd.ConnState != nil {
+		idx = cmd.ConnState.DbNumber
+	} else if cmd.DbNumber != nil {
 		idx = *cmd.DbNumber
 	}
 	i.initDb(idx)
+	if cmd.ConnState != nil {
+		cmd.ConnState.DbNumber = idx
+	}
 	cmd.DbNumber = &idx
 	dbi := i.dbs[idx]
 
@@ -84,7 +89,7 @@ func (i *Instance) processCmd(cmd *Command) {
 		return
 	}
 
-	if err := hdl(dbi, cmd); err != nil {
+	if err := hdl(dbi, cmd, cmd.ConnState); err != nil {
 		cmd.WriteAny(err)
 		cmd.SetDone()
 		return

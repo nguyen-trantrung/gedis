@@ -13,8 +13,9 @@ import (
 
 var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
 
-type Handler func(db *database, cmd *Command) error
+type Handler func(db *database, cmd *Command, conn *ConnState) error
 
+// Utility functions for parsing arguments
 func parseBulkStr(arg any) (string, error) {
 	bulkStr, ok := arg.(resp.BulkStr)
 	if !ok {
@@ -53,21 +54,28 @@ func parseFloat(arg any) (float64, error) {
 	return val, nil
 }
 
-var hmap = map[string]Handler{
-	"ping":   handlePing,
-	"echo":   handleEcho,
-	"select": handleSelect,
-	"set":    handleSet,
-	"get":    handleGet,
-	"rpush":  handleRPush,
-	"lpush":  handleLPush,
-	"lpop":   handleLPop,
-	"rpop":   handleRPop,
-	"lrange": handleLRange,
-	"llen":   handleLLen,
-	"lindex": handleLIndex,
-	"blpop":  handleBlockLpop,
-	"incr":   handleIncr,
+var hmap map[string]Handler
+
+func init() {
+	hmap = map[string]Handler{
+		"ping":    handlePing,
+		"echo":    handleEcho,
+		"select":  handleSelect,
+		"set":     handleSet,
+		"get":     handleGet,
+		"rpush":   handleRPush,
+		"lpush":   handleLPush,
+		"lpop":    handleLPop,
+		"rpop":    handleRPop,
+		"lrange":  handleLRange,
+		"llen":    handleLLen,
+		"lindex":  handleLIndex,
+		"blpop":   handleBlockLpop,
+		"incr":    handleIncr,
+		"multi":   handleMulti,
+		"exec":    handleExec,
+		"discard": handleDiscard,
+	}
 }
 
 func selectHandler(cmd *Command) (Handler, error) {
@@ -79,21 +87,27 @@ func selectHandler(cmd *Command) (Handler, error) {
 	return hdlr, nil
 }
 
-func handlePing(db *database, cmd *Command) error {
+func handlePing(db *database, cmd *Command, conn *ConnState) error {
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	cmd.WriteAny("PONG")
 	return nil
 }
 
-func handleEcho(db *database, cmd *Command) error {
+func handleEcho(db *database, cmd *Command, conn *ConnState) error {
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	for _, arg := range cmd.Cmd.Args {
 		cmd.WriteAny(arg)
 	}
 	return nil
 }
 
-func handleSelect(db *database, cmd *Command) error {
+func handleSelect(db *database, cmd *Command, conn *ConnState) error {
 	if len(cmd.Cmd.Args) < 1 {
 		return fmt.Errorf("%w: missing database number", ErrInvalidArguments)
 	}
@@ -102,6 +116,9 @@ func handleSelect(db *database, cmd *Command) error {
 		return err
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	cmd.SelectDb(dbn)
 	cmd.WriteAny("OK")
 	return nil
@@ -138,7 +155,7 @@ func checkExpiry(args []any) (int, bool, error) {
 	return ttl * mod, true, nil
 }
 
-func handleSet(db *database, cmd *Command) error {
+func handleSet(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -150,17 +167,23 @@ func handleSet(db *database, cmd *Command) error {
 		return err
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	db.HashMap().Set(key, value, ttl)
 	cmd.WriteAny("OK")
 	return nil
 }
 
-func handleGet(db *database, cmd *Command) error {
+func handleGet(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	key := args[0]
 	value, ok := db.HashMap().Get(key)
 	if !ok {
@@ -171,12 +194,15 @@ func handleGet(db *database, cmd *Command) error {
 	return nil
 }
 
-func handleRPush(db *database, cmd *Command) error {
+func handleRPush(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	key := args[0]
 	list := db.GetOrCreateList(key)
 	for _, value := range args[1:] {
@@ -199,12 +225,15 @@ func handleRPush(db *database, cmd *Command) error {
 	return nil
 }
 
-func handleLPush(db *database, cmd *Command) error {
+func handleLPush(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	key := args[0]
 	list := db.GetOrCreateList(key)
 	for _, value := range args[1:] {
@@ -227,12 +256,15 @@ func handleLPush(db *database, cmd *Command) error {
 	return nil
 }
 
-func handleLPop(db *database, cmd *Command) error {
+func handleLPop(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	key := args[0]
 
 	count := 1
@@ -278,12 +310,15 @@ func handleLPop(db *database, cmd *Command) error {
 	return nil
 }
 
-func handleRPop(db *database, cmd *Command) error {
+func handleRPop(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	key := args[0]
 
 	count := 1
@@ -329,12 +364,15 @@ func handleRPop(db *database, cmd *Command) error {
 	return nil
 }
 
-func handleLRange(db *database, cmd *Command) error {
+func handleLRange(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 3 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	key := args[0]
 
 	start, err := parseInt(args[1])
@@ -358,12 +396,15 @@ func handleLRange(db *database, cmd *Command) error {
 	return nil
 }
 
-func handleLLen(db *database, cmd *Command) error {
+func handleLLen(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	key := args[0]
 	list, exists := db.GetList(key)
 	if !exists {
@@ -374,12 +415,15 @@ func handleLLen(db *database, cmd *Command) error {
 	return nil
 }
 
-func handleLIndex(db *database, cmd *Command) error {
+func handleLIndex(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 	key := args[0]
 
 	index, err := parseInt(args[1])
@@ -402,7 +446,7 @@ func handleLIndex(db *database, cmd *Command) error {
 	return nil
 }
 
-func handleBlockLpop(db *database, cmd *Command) error {
+func handleBlockLpop(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -442,13 +486,18 @@ func resolveBlockLpop(db *database, key any, cmd *Command) (ok bool) {
 	return true
 }
 
-func handleIncr(db *database, cmd *Command) error {
+func handleIncr(db *database, cmd *Command, conn *ConnState) error {
 	args := cmd.Cmd.Args
 	if len(args) != 1 {
+		log.Println(args)
 		return fmt.Errorf("%w: requires exactly 1 argument", ErrInvalidArguments)
 	}
 	key := args[0]
 	defer cmd.SetDone()
+
+	if checkInTx(cmd, conn) {
+		return nil
+	}
 
 	val, ok := db.hm.Get(key)
 	if !ok {
@@ -467,9 +516,70 @@ func handleIncr(db *database, cmd *Command) error {
 		db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
 		cmd.WriteAny(num)
 	default:
-		// TODO: Change this if later we support integer/float value types
 		return fmt.Errorf("value is not an integer or out of range")
 	}
 
+	return nil
+}
+
+func handleMulti(db *database, cmd *Command, conn *ConnState) error {
+	defer cmd.SetDone()
+	if conn.InTransaction {
+		return fmt.Errorf("MULTI calls cannot be nested")
+	}
+	conn.InTransaction = true
+	cmd.WriteAny("OK")
+	return nil
+}
+
+func handleExec(db *database, cmd *Command, conn *ConnState) error {
+	defer cmd.SetDone()
+	if !conn.InTransaction {
+		return fmt.Errorf("EXEC without MULTI")
+	}
+	defer func() {
+		conn.Tx = make([]*Command, 0)
+	}()
+
+	bufs := make([]any, 0, len(conn.Tx))
+	conn.InTransaction = false
+
+	for _, op := range conn.Tx {
+		hdl, err := selectHandler(op)
+		if err != nil {
+			return err
+		}
+		err = hdl(db, op, conn)
+		if err != nil {
+			cmd.SetDone()
+			bufs = append(bufs, err)
+		} else {
+			bufs = append(bufs, op.out)
+		}
+	}
+
+	arr := resp.Array{Size: len(bufs), Items: bufs}
+
+	cmd.WriteAny(arr)
+	return nil
+}
+
+func checkInTx(cmd *Command, conn *ConnState) bool {
+	if conn.InTransaction {
+		conn.Tx = append(conn.Tx, cmd.Copy())
+		cmd.WriteAny("QUEUED")
+		return true
+	}
+	return false
+}
+
+func handleDiscard(db *database, cmd *Command, conn *ConnState) error {
+	defer cmd.SetDone()
+
+	if !checkInTx(cmd, conn) {
+		return fmt.Errorf("DISCARD without MULTI")
+	}
+	conn.Tx = make([]*Command, 0)
+	cmd.WriteAny("OK")
 	return nil
 }

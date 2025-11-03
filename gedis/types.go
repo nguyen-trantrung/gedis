@@ -14,6 +14,7 @@ type Command struct {
 	Cmd            resp.Command
 	Addr           string
 	DbNumber       *int
+	ConnState      *ConnState
 	out            *bytes.Buffer
 	done           bool
 	timedOut       time.Time
@@ -106,4 +107,27 @@ func (c *Command) WriteTo(str io.Writer) (n int64, err error) {
 	}
 
 	return c.out.WriteTo(str)
+}
+
+func (c *Command) Copy() *Command {
+	var dbNumCopy *int
+	if c.DbNumber != nil {
+		dbNum := *c.DbNumber
+		dbNumCopy = &dbNum
+	}
+	var outCopy *bytes.Buffer
+	if c.out != nil {
+		outCopy = bytes.NewBuffer(c.out.Bytes())
+	}
+	cmdCopy := c.Cmd
+	return &Command{
+		Cmd:            cmdCopy,
+		Addr:           c.Addr,
+		DbNumber:       dbNumCopy,
+		ConnState:      c.ConnState, // shallow copy, shared pointer
+		out:            outCopy,
+		done:           c.done,
+		timedOut:       c.timedOut,
+		defTimedOutOut: c.defTimedOutOut,
+	}
 }

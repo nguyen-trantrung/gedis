@@ -93,16 +93,19 @@ func (s *Server) closeConn(ctx context.Context) error {
 }
 
 type connState struct {
-	mu       sync.Mutex
-	pending  []*gedis.Command
-	dbNumber int
+	mu        sync.Mutex
+	pending   []*gedis.Command
+	connState *gedis.ConnState
 }
 
 func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 	log.Printf("connection established, addr=%s", conn.RemoteAddr())
 	ctx, cancel := context.WithCancel(baseCtx)
 
-	state := &connState{pending: make([]*gedis.Command, 0), dbNumber: 0}
+	state := &connState{
+		pending:   make([]*gedis.Command, 0),
+		connState: gedis.NewConnState(),
+	}
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
@@ -133,7 +136,8 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 				continue
 			}
 
-			rCmd := gedis.NewCommand(cmd, conn.RemoteAddr().String(), state.dbNumber)
+			rCmd := gedis.NewCommand(cmd, conn.RemoteAddr().String(), state.connState.DbNumber)
+			rCmd.ConnState = state.connState
 			state.mu.Lock()
 			state.pending = append(state.pending, rCmd)
 			state.mu.Unlock()
@@ -171,7 +175,7 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 						log.Printf("written to TCP stream, addr=%s n=%d", conn.RemoteAddr(), respn)
 					}
 					if cmd.DbNumber != nil {
-						state.dbNumber = *cmd.DbNumber
+						state.connState.DbNumber = *cmd.DbNumber
 					}
 					state.pending = state.pending[1:]
 				}
