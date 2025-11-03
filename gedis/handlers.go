@@ -465,12 +465,11 @@ func handleIncr(db *database, cmd *Command) error {
 		num += 1
 		numStr := fmt.Sprintf("%d", num)
 		db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
+		cmd.WriteAny(num)
 	default:
 		// TODO: Change this if later we support integer/float value types
 		return fmt.Errorf("%w: value is not an integer or out of range", ErrInvalidArguments)
 	}
-
-	cmd.WriteAny("OK")
 
 	return nil
 }
