@@ -7,28 +7,28 @@ import (
 	"strings"
 )
 
-type Repl struct {
+type Slave struct {
 	masterUrlStr string
 	host         string
 	port         int
 }
 
-func NewRepl(masterUrl string) (*Repl, error) {
-	repl := &Repl{
+func NewSlave(masterUrl string) (*Slave, error) {
+	slave := &Slave{
 		masterUrlStr: masterUrl,
 	}
-	if err := repl.validate(); err != nil {
+	if err := slave.validate(); err != nil {
 		return nil, err
 	}
-	return repl, nil
+	return slave, nil
 }
 
-func (r *Repl) validate() error {
-	if len(r.masterUrlStr) == 0 {
+func (s *Slave) validate() error {
+	if len(s.masterUrlStr) == 0 {
 		return nil
 	}
 
-	args := strings.Split(r.masterUrlStr, " ")
+	args := strings.Split(s.masterUrlStr, " ")
 	if len(args) != 2 {
 		return fmt.Errorf("invalid master url")
 	}
@@ -37,11 +37,11 @@ func (r *Repl) validate() error {
 	if err != nil || port <= 0 || port > 65535 {
 		return fmt.Errorf("invalid master port")
 	}
-	r.host = hostStr
-	r.port = port
+	s.host = hostStr
+	s.port = port
 	return nil
 }
 
-func (r *Repl) Handshake(ctx context.Context) error {
+func (s *Slave) Handshake(ctx context.Context) error {
 	return nil
 }

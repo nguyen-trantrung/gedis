@@ -11,21 +11,20 @@ import (
 type Bytes []byte
 
 type Command struct {
+	ConnState      *ConnState
 	Cmd            resp.Command
 	Addr           string
-	DbNumber       *int
-	ConnState      *ConnState
 	out            *bytes.Buffer
 	done           bool
 	timedOut       time.Time
 	defTimedOutOut any
 }
 
-func NewCommand(cmd resp.Command, addr string, dbNumber int) *Command {
+func NewCommand(cmd resp.Command, state *ConnState, addr string) *Command {
 	return &Command{
 		Cmd:            cmd,
 		Addr:           addr,
-		DbNumber:       &dbNumber,
+		ConnState:      state,
 		done:           false,
 		defTimedOutOut: nil,
 	}
@@ -48,7 +47,7 @@ func (c *Command) HasTimedOut() bool {
 }
 
 func (c *Command) SelectDb(dbNum int) {
-	c.DbNumber = &dbNum
+	c.ConnState.DbNumber = dbNum
 }
 
 func (c *Command) SetOutput(data Bytes) {
@@ -110,11 +109,6 @@ func (c *Command) WriteTo(str io.Writer) (n int64, err error) {
 }
 
 func (c *Command) Copy() *Command {
-	var dbNumCopy *int
-	if c.DbNumber != nil {
-		dbNum := *c.DbNumber
-		dbNumCopy = &dbNum
-	}
 	var outCopy *bytes.Buffer
 	if c.out != nil {
 		outCopy = bytes.NewBuffer(c.out.Bytes())
@@ -123,11 +117,17 @@ func (c *Command) Copy() *Command {
 	return &Command{
 		Cmd:            cmdCopy,
 		Addr:           c.Addr,
-		DbNumber:       dbNumCopy,
-		ConnState:      c.ConnState, // shallow copy, shared pointer
+		ConnState:      c.ConnState,
 		out:            outCopy,
 		done:           c.done,
 		timedOut:       c.timedOut,
 		defTimedOutOut: c.defTimedOutOut,
 	}
+}
+
+func (c *Command) Db() int {
+	if c.ConnState != nil {
+		return c.ConnState.DbNumber
+	}
+	return 0
 }

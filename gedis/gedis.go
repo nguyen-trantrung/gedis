@@ -10,47 +10,16 @@ import (
 	"github.com/ttn-nguyen42/gedis/gedis/repl"
 )
 
-type Options struct {
-	Role      string
-	MasterURL string
-}
-
-func (o *Options) Info() *info.Info {
-	inf := info.NewInfo(version)
-	inf.Replication.SetRole(o.Role)
-	return inf
-}
-
-func (o *Options) Repl() (*repl.Repl, error) {
-	if o.Role != "slave" {
-		return nil, nil
-	}
-	return repl.NewRepl(o.MasterURL)
-}
-
-type Option func(o *Options)
-
-func AsMaster() Option {
-	return func(o *Options) {
-		o.Role = "master"
-	}
-}
-
-func AsSlave(masterURL string) Option {
-	return func(o *Options) {
-		o.Role = "slave"
-		o.MasterURL = masterURL
-	}
-}
-
 type Instance struct {
-	info    *info.Info
-	cmdBuf  *circular[*Command]
-	stop    chan struct{}
-	dbs     []*database
-	round   int
-	options *Options
-	repl    *repl.Repl
+	info     *info.Info
+	cmdBuf   *circular[*Command]
+	stop     chan struct{}
+	dbs      []*database
+	handlers map[int]*handlers
+	round    int
+	options  *Options
+	slave    *repl.Slave
+	master   *repl.Master
 }
 
 func NewInstance(cap int, opts ...Option) (*Instance, error) {
@@ -66,19 +35,43 @@ func NewInstance(cap int, opts ...Option) (*Instance, error) {
 	for _, opt := range opts {
 		opt(inst.options)
 	}
-	inst.info = inst.options.Info()
-	repl, err := inst.options.Repl()
-	if err != nil {
-		return nil, fmt.Errorf("failed to setup replication: %w", err)
-	}
-	inst.repl = repl
 
-	log.Printf("gedis instance created with role=%s", inst.options.Role)
+	if err := inst.init(); err != nil {
+		return nil, err
+	}
 	return inst, nil
+}
+
+func (i *Instance) init() error {
+	i.info = i.options.Info()
+
+	switch {
+	case i.isMaster():
+		i.master = i.options.Master()
+	case i.isSlave():
+		slave, err := i.options.Slave()
+		if err != nil {
+			return err
+		}
+		i.slave = slave
+	default:
+		return fmt.Errorf("invalid gedis role: %s", i.options.Role)
+	}
+
+	log.Printf("gedis instance created with role=%s", i.options.Role)
+	return nil
 }
 
 func (i *Instance) Info() *info.Info {
 	return i.info
+}
+
+func (i *Instance) isSlave() bool {
+	return i.options.Role == "slave"
+}
+
+func (i *Instance) isMaster() bool {
+	return i.options.Role == "master"
 }
 
 func (i *Instance) Run(ctx context.Context) error {
@@ -122,32 +115,25 @@ func (i *Instance) initDb(idx int) error {
 	}
 	if i.dbs[idx] == nil {
 		i.dbs[idx] = newDb(idx)
+		i.handlers[idx] = newHandlers(i.dbs[idx], i.info)
 	}
 	return nil
 }
 
 func (i *Instance) processCmd(cmd *Command) {
-	idx := 0
-	if cmd.ConnState != nil {
-		idx = cmd.ConnState.DbNumber
-	} else if cmd.DbNumber != nil {
-		idx = *cmd.DbNumber
-	}
-	i.initDb(idx)
-	if cmd.ConnState != nil {
-		cmd.ConnState.DbNumber = idx
-	}
-	cmd.DbNumber = &idx
-	dbi := i.dbs[idx]
+	dbn := cmd.Db()
+	i.initDb(dbn)
 
-	hdl, err := selectHandler(cmd)
+	handlers := i.handlers[dbn]
+
+	hdl, err := handlers.route(cmd)
 	if err != nil {
 		cmd.WriteAny(err)
 		cmd.SetDone()
 		return
 	}
 
-	if err := hdl(dbi, cmd, cmd.ConnState, i.info); err != nil {
+	if err := hdl(cmd.ConnState, cmd); err != nil {
 		cmd.WriteAny(err)
 		cmd.SetDone()
 		return

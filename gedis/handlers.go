@@ -14,7 +14,46 @@ import (
 
 var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
 
-type Handler func(db *database, cmd *Command, conn *ConnState, info *info.Info) error
+type handler func(conn *ConnState, cmd *Command) error
+
+type handlers struct {
+	db   *database
+	info *info.Info
+	hmap map[string]handler
+}
+
+func newHandlers(db *database, info *info.Info) *handlers {
+	hdl := &handlers{
+		db:   db,
+		info: info,
+		hmap: nil,
+	}
+	hdl.init()
+	return hdl
+}
+
+func (h *handlers) init() {
+	h.hmap = map[string]handler{
+		"ping":    h.handlePing,
+		"echo":    h.handleEcho,
+		"select":  h.handleSelect,
+		"set":     h.handleSet,
+		"get":     h.handleGet,
+		"rpush":   h.handleRPush,
+		"lpush":   h.handleLPush,
+		"lpop":    h.handleLPop,
+		"rpop":    h.handleRPop,
+		"lrange":  h.handleLRange,
+		"llen":    h.handleLLen,
+		"lindex":  h.handleLIndex,
+		"blpop":   h.handleBlockLpop,
+		"incr":    h.handleIncr,
+		"multi":   h.handleMulti,
+		"exec":    h.handleExec,
+		"discard": h.handleDiscard,
+		"info":    h.handleInfo,
+	}
+}
 
 func parseBulkStr(arg any) (string, error) {
 	bulkStr, ok := arg.(resp.BulkStr)
@@ -54,52 +93,27 @@ func parseFloat(arg any) (float64, error) {
 	return val, nil
 }
 
-var hmap map[string]Handler
-
-func init() {
-	hmap = map[string]Handler{
-		"ping":    handlePing,
-		"echo":    handleEcho,
-		"select":  handleSelect,
-		"set":     handleSet,
-		"get":     handleGet,
-		"rpush":   handleRPush,
-		"lpush":   handleLPush,
-		"lpop":    handleLPop,
-		"rpop":    handleRPop,
-		"lrange":  handleLRange,
-		"llen":    handleLLen,
-		"lindex":  handleLIndex,
-		"blpop":   handleBlockLpop,
-		"incr":    handleIncr,
-		"multi":   handleMulti,
-		"exec":    handleExec,
-		"discard": handleDiscard,
-		"info":    handleInfo,
-	}
-}
-
-func selectHandler(cmd *Command) (Handler, error) {
+func (h *handlers) route(cmd *Command) (handler, error) {
 	r := cmd.Cmd
-	hdlr, found := hmap[strings.ToLower(r.Cmd)]
+	hdlr, found := h.hmap[strings.ToLower(r.Cmd)]
 	if !found {
 		return nil, fmt.Errorf("%w: invalid command '%s'", resp.ErrProtocolError, r.Cmd)
 	}
 	return hdlr, nil
 }
 
-func handlePing(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handlePing(conn *ConnState, cmd *Command) error {
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	cmd.WriteAny("PONG")
 	return nil
 }
 
-func handleEcho(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleEcho(conn *ConnState, cmd *Command) error {
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	for _, arg := range cmd.Cmd.Args {
@@ -108,7 +122,7 @@ func handleEcho(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 	return nil
 }
 
-func handleSelect(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleSelect(conn *ConnState, cmd *Command) error {
 	if len(cmd.Cmd.Args) < 1 {
 		return fmt.Errorf("%w: missing database number", ErrInvalidArguments)
 	}
@@ -117,7 +131,7 @@ func handleSelect(db *database, cmd *Command, conn *ConnState, info *info.Info) 
 		return err
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	cmd.SelectDb(dbn)
@@ -156,7 +170,7 @@ func checkExpiry(args []any) (int, bool, error) {
 	return ttl * mod, true, nil
 }
 
-func handleSet(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleSet(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -171,28 +185,28 @@ func handleSet(db *database, cmd *Command, conn *ConnState, info *info.Info) err
 		return err
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
-	db.HashMap().Set(key, value, ttl)
+	h.db.HashMap().Set(key, value, ttl)
 	cmd.WriteAny("OK")
 	return nil
 }
 
-func handleGet(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleGet(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
 	}
-	value, ok := db.HashMap().Get(key)
+	value, ok := h.db.HashMap().Get(key)
 	if !ok {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
@@ -201,32 +215,32 @@ func handleGet(db *database, cmd *Command, conn *ConnState, info *info.Info) err
 	return nil
 }
 
-func handleRPush(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleRPush(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
 	}
-	list := db.GetOrCreateList(key)
+	list := h.db.GetOrCreateList(key)
 	for _, value := range args[1:] {
 		list.RightPush(value)
 	}
 	cmd.WriteAny(list.Len())
 
-	blkRequests, ok := db.block.blockLpop[key]
+	blkRequests, ok := h.db.block.blockLpop[key]
 	if !ok {
 		return nil
 	}
 
-	db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *Command) bool {
-		ok := resolveBlockLpop(db, key, req)
+	h.db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *Command) bool {
+		ok := h.resolveBlockLpop(key, req)
 		if ok {
 			log.Printf("resolved blpop request, listKey=%s", key)
 		}
@@ -235,32 +249,32 @@ func handleRPush(db *database, cmd *Command, conn *ConnState, info *info.Info) e
 	return nil
 }
 
-func handleLPush(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleLPush(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
 	}
-	list := db.GetOrCreateList(key)
+	list := h.db.GetOrCreateList(key)
 	for _, value := range args[1:] {
 		list.LeftPush(value)
 	}
 	cmd.WriteAny(list.Len())
 
-	blkRequests, ok := db.block.blockLpop[key]
+	blkRequests, ok := h.db.block.blockLpop[key]
 	if !ok {
 		return nil
 	}
 
-	db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *Command) bool {
-		ok := resolveBlockLpop(db, key, req)
+	h.db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *Command) bool {
+		ok := h.resolveBlockLpop(key, req)
 		if ok {
 			log.Printf("resolved blpop request, listKey=%s", key)
 		}
@@ -269,13 +283,13 @@ func handleLPush(db *database, cmd *Command, conn *ConnState, info *info.Info) e
 	return nil
 }
 
-func handleLPop(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleLPop(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
@@ -292,7 +306,7 @@ func handleLPop(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 		}
 	}
 
-	list, exists := db.GetList(key)
+	list, exists := h.db.GetList(key)
 	if !exists {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
@@ -308,7 +322,7 @@ func handleLPop(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 			items = append(items, value)
 		}
 		if list.Len() == 0 {
-			db.DeleteList(key)
+			h.db.DeleteList(key)
 		}
 		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
 		return nil
@@ -320,19 +334,19 @@ func handleLPop(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 		return nil
 	}
 	if list.Len() == 0 {
-		db.DeleteList(key)
+		h.db.DeleteList(key)
 	}
 	cmd.WriteAny(value)
 	return nil
 }
 
-func handleRPop(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleRPop(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
@@ -349,7 +363,7 @@ func handleRPop(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 		}
 	}
 
-	list, exists := db.GetList(key)
+	list, exists := h.db.GetList(key)
 	if !exists {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
@@ -365,7 +379,7 @@ func handleRPop(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 			items = append(items, value)
 		}
 		if list.Len() == 0 {
-			db.DeleteList(key)
+			h.db.DeleteList(key)
 		}
 		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
 		return nil
@@ -377,19 +391,19 @@ func handleRPop(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 		return nil
 	}
 	if list.Len() == 0 {
-		db.DeleteList(key)
+		h.db.DeleteList(key)
 	}
 	cmd.WriteAny(value)
 	return nil
 }
 
-func handleLRange(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleLRange(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 3 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
@@ -407,7 +421,7 @@ func handleLRange(db *database, cmd *Command, conn *ConnState, info *info.Info) 
 		return err
 	}
 
-	list, exists := db.GetList(key)
+	list, exists := h.db.GetList(key)
 	if !exists {
 		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
 		return nil
@@ -418,20 +432,20 @@ func handleLRange(db *database, cmd *Command, conn *ConnState, info *info.Info) 
 	return nil
 }
 
-func handleLLen(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleLLen(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
 	}
-	list, exists := db.GetList(key)
+	list, exists := h.db.GetList(key)
 	if !exists {
 		cmd.WriteAny(0)
 		return nil
@@ -440,13 +454,13 @@ func handleLLen(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 	return nil
 }
 
-func handleLIndex(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleLIndex(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
@@ -459,7 +473,7 @@ func handleLIndex(db *database, cmd *Command, conn *ConnState, info *info.Info) 
 		return err
 	}
 
-	list, exists := db.GetList(key)
+	list, exists := h.db.GetList(key)
 	if !exists {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
@@ -474,13 +488,13 @@ func handleLIndex(db *database, cmd *Command, conn *ConnState, info *info.Info) 
 	return nil
 }
 
-func handleBlockLpop(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleBlockLpop(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 
@@ -499,15 +513,15 @@ func handleBlockLpop(db *database, cmd *Command, conn *ConnState, info *info.Inf
 		cmd.SetDefaultTimeoutOutput(resp.Array{Size: -1})
 	}
 
-	ok := resolveBlockLpop(db, key, cmd)
+	ok := h.resolveBlockLpop(key, cmd)
 	if !ok {
-		db.block.blockLpop[key] = append(db.block.blockLpop[key], cmd)
+		h.db.block.blockLpop[key] = append(h.db.block.blockLpop[key], cmd)
 	}
 	return nil
 }
 
-func resolveBlockLpop(db *database, key string, cmd *Command) (ok bool) {
-	list, exists := db.GetList(key)
+func (h *handlers) resolveBlockLpop(key string, cmd *Command) (ok bool) {
+	list, exists := h.db.GetList(key)
 	if !exists {
 		return false
 	}
@@ -522,7 +536,7 @@ func resolveBlockLpop(db *database, key string, cmd *Command) (ok bool) {
 	return true
 }
 
-func handleIncr(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleIncr(conn *ConnState, cmd *Command) error {
 	args := cmd.Cmd.Args
 	if len(args) != 1 {
 		log.Println(args)
@@ -534,13 +548,13 @@ func handleIncr(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 	}
 	defer cmd.SetDone()
 
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return nil
 	}
 
-	val, ok := db.hm.Get(key)
+	val, ok := h.db.hm.Get(key)
 	if !ok {
-		db.HashMap().Set(key, resp.BulkStr{Size: 1, Value: "1"}, 0)
+		h.db.HashMap().Set(key, resp.BulkStr{Size: 1, Value: "1"}, 0)
 		cmd.WriteAny(1)
 		return nil
 	}
@@ -552,7 +566,7 @@ func handleIncr(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 		}
 		num += 1
 		numStr := fmt.Sprintf("%d", num)
-		db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
+		h.db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
 		cmd.WriteAny(num)
 	default:
 		return fmt.Errorf("value is not an integer or out of range")
@@ -561,7 +575,7 @@ func handleIncr(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 	return nil
 }
 
-func handleMulti(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleMulti(conn *ConnState, cmd *Command) error {
 	defer cmd.SetDone()
 	if conn.InTransaction {
 		return fmt.Errorf("MULTI calls cannot be nested")
@@ -571,7 +585,7 @@ func handleMulti(db *database, cmd *Command, conn *ConnState, info *info.Info) e
 	return nil
 }
 
-func handleExec(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleExec(conn *ConnState, cmd *Command) error {
 	defer cmd.SetDone()
 	if !conn.InTransaction {
 		return fmt.Errorf("EXEC without MULTI")
@@ -584,11 +598,11 @@ func handleExec(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 	conn.InTransaction = false
 
 	for _, op := range conn.Tx {
-		hdl, err := selectHandler(op)
+		hdl, err := h.route(op)
 		if err != nil {
 			return err
 		}
-		err = hdl(db, op, conn, info)
+		err = hdl(conn, op)
 		if err != nil {
 			cmd.SetDone()
 			bufs = append(bufs, err)
@@ -603,7 +617,7 @@ func handleExec(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 	return nil
 }
 
-func checkInTx(cmd *Command, conn *ConnState) bool {
+func (h *handlers) checkInTx(conn *ConnState, cmd *Command) bool {
 	if conn.InTransaction {
 		conn.Tx = append(conn.Tx, cmd.Copy())
 		cmd.WriteAny("QUEUED")
@@ -612,7 +626,7 @@ func checkInTx(cmd *Command, conn *ConnState) bool {
 	return false
 }
 
-func handleDiscard(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleDiscard(conn *ConnState, cmd *Command) error {
 	defer cmd.SetDone()
 
 	if !conn.InTransaction {
@@ -625,9 +639,9 @@ func handleDiscard(db *database, cmd *Command, conn *ConnState, info *info.Info)
 	return nil
 }
 
-func handleInfo(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+func (h *handlers) handleInfo(conn *ConnState, cmd *Command) error {
 	defer cmd.SetDone()
-	if checkInTx(cmd, conn) {
+	if h.checkInTx(conn, cmd) {
 		return fmt.Errorf("INFO not available during transaction")
 	}
 	args := cmd.Cmd.Args
@@ -636,7 +650,7 @@ func handleInfo(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 		if err != nil {
 			return err
 		}
-		fields := info.Fields()
+		fields := h.info.Fields()
 		for _, field := range fields {
 			if strings.EqualFold(section, field.Name) {
 				str := fmt.Sprintf("# %s\n%v\n", field.Name, field.Value)
@@ -648,7 +662,7 @@ func handleInfo(db *database, cmd *Command, conn *ConnState, info *info.Info) er
 		return fmt.Errorf("unknown section '%s'", section)
 	}
 
-	str := info.String()
+	str := h.info.String()
 	bs := resp.BulkStr{Size: len(str), Value: str}
 	cmd.WriteAny(bs)
 	return nil

@@ -146,7 +146,7 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 				continue
 			}
 
-			rCmd := gedis.NewCommand(cmd, conn.RemoteAddr().String(), state.connState.DbNumber)
+			rCmd := gedis.NewCommand(cmd, state.connState, conn.RemoteAddr().String())
 			rCmd.ConnState = state.connState
 			state.mu.Lock()
 			state.pending = append(state.pending, rCmd)
@@ -183,9 +183,6 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 						log.Printf("write err to TCP, err=%s, addr=%s", err, conn.RemoteAddr())
 					} else {
 						log.Printf("written to TCP stream, addr=%s n=%d", conn.RemoteAddr(), respn)
-					}
-					if cmd.DbNumber != nil {
-						state.connState.DbNumber = *cmd.DbNumber
 					}
 					state.pending = state.pending[1:]
 				}
