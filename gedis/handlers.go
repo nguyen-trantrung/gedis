@@ -160,7 +160,10 @@ func handleSet(db *database, cmd *Command, conn *ConnState) error {
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 	value := args[1]
 	ttl, _, err := checkExpiry(args[2:])
 	if err != nil {
@@ -184,7 +187,10 @@ func handleGet(db *database, cmd *Command, conn *ConnState) error {
 	if checkInTx(cmd, conn) {
 		return nil
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 	value, ok := db.HashMap().Get(key)
 	if !ok {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
@@ -203,7 +209,10 @@ func handleRPush(db *database, cmd *Command, conn *ConnState) error {
 	if checkInTx(cmd, conn) {
 		return nil
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 	list := db.GetOrCreateList(key)
 	for _, value := range args[1:] {
 		list.RightPush(value)
@@ -234,7 +243,10 @@ func handleLPush(db *database, cmd *Command, conn *ConnState) error {
 	if checkInTx(cmd, conn) {
 		return nil
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 	list := db.GetOrCreateList(key)
 	for _, value := range args[1:] {
 		list.LeftPush(value)
@@ -265,7 +277,10 @@ func handleLPop(db *database, cmd *Command, conn *ConnState) error {
 	if checkInTx(cmd, conn) {
 		return nil
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 
 	count := 1
 	if len(args) >= 2 {
@@ -319,7 +334,10 @@ func handleRPop(db *database, cmd *Command, conn *ConnState) error {
 	if checkInTx(cmd, conn) {
 		return nil
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 
 	count := 1
 	if len(args) >= 2 {
@@ -373,7 +391,10 @@ func handleLRange(db *database, cmd *Command, conn *ConnState) error {
 	if checkInTx(cmd, conn) {
 		return nil
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 
 	start, err := parseInt(args[1])
 	if err != nil {
@@ -405,7 +426,10 @@ func handleLLen(db *database, cmd *Command, conn *ConnState) error {
 	if checkInTx(cmd, conn) {
 		return nil
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 	list, exists := db.GetList(key)
 	if !exists {
 		cmd.WriteAny(0)
@@ -424,7 +448,10 @@ func handleLIndex(db *database, cmd *Command, conn *ConnState) error {
 	if checkInTx(cmd, conn) {
 		return nil
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 
 	index, err := parseInt(args[1])
 	if err != nil {
@@ -456,7 +483,10 @@ func handleBlockLpop(db *database, cmd *Command, conn *ConnState) error {
 		return nil
 	}
 
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 
 	timeout, err := parseFloat(args[1])
 	if err != nil {
@@ -475,7 +505,7 @@ func handleBlockLpop(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func resolveBlockLpop(db *database, key any, cmd *Command) (ok bool) {
+func resolveBlockLpop(db *database, key string, cmd *Command) (ok bool) {
 	list, exists := db.GetList(key)
 	if !exists {
 		return false
@@ -497,7 +527,10 @@ func handleIncr(db *database, cmd *Command, conn *ConnState) error {
 		log.Println(args)
 		return fmt.Errorf("%w: requires exactly 1 argument", ErrInvalidArguments)
 	}
-	key := args[0]
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
 	defer cmd.SetDone()
 
 	if checkInTx(cmd, conn) {
