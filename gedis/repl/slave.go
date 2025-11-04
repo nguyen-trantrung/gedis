@@ -91,9 +91,10 @@ func (s *Slave) Handshake(ctx context.Context) error {
 	if err := s.replConf(ctx, capa); err != nil {
 		return fmt.Errorf("replconf master err: %w", err)
 	}
-	// if err := s.psync(ctx); err != nil {
-	// 	return fmt.Errorf("psync master err: %w", err)
-	// }
+	syncargs := []any{"?", "-1"}
+	if err := s.psync(ctx, syncargs); err != nil {
+		return fmt.Errorf("psync master err: %w", err)
+	}
 	return nil
 }
 
@@ -109,8 +110,8 @@ func (s *Slave) replConf(ctx context.Context, args []any) error {
 	return err
 }
 
-func (s *Slave) psync(ctx context.Context) error {
-	cmd := resp.Command{Cmd: "PSYNC", Args: nil}
+func (s *Slave) psync(ctx context.Context, args []any) error {
+	cmd := resp.Command{Cmd: "PSYNC", Args: args}
 	_, err := s.client.SendSync(ctx, &cmd)
 	return err
 }

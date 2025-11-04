@@ -119,7 +119,7 @@ func (i *Instance) initDb(idx int) error {
 	}
 	if i.dbs[idx] == nil {
 		i.dbs[idx] = newDb(idx)
-		i.handlers[idx] = newHandlers(i.dbs[idx], i.info, i.isSlave())
+		i.handlers[idx] = newHandlers(i.dbs[idx], i.info, i.master, i.slave)
 	}
 	return nil
 }

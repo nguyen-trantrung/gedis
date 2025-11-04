@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ttn-nguyen42/gedis/gedis/info"
+	"github.com/ttn-nguyen42/gedis/gedis/repl"
 	"github.com/ttn-nguyen42/gedis/resp"
 )
 
@@ -18,17 +19,21 @@ type handler func(conn *ConnState, cmd *Command) error
 
 type handlers struct {
 	isSlave bool
+	master  *repl.Master
+	slave   *repl.Slave
 	db      *database
 	info    *info.Info
 	hmap    map[string]handler
 }
 
-func newHandlers(db *database, info *info.Info, isSlave bool) *handlers {
+func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl.Slave) *handlers {
 	hdl := &handlers{
 		db:      db,
 		info:    info,
 		hmap:    nil,
-		isSlave: isSlave,
+		isSlave: slave != nil,
+		master:  master,
+		slave:   slave,
 	}
 	hdl.init()
 	return hdl
@@ -693,6 +698,7 @@ func (h *handlers) handlePsync(conn *ConnState, cmd *Command) error {
 	if h.isSlave {
 		return fmt.Errorf("PSYNC invalid for slave")
 	}
-	cmd.WriteAny("OK")
+	sarr := resp.Array{Size: 3, Items: []any{"PSYNC", h.master.ReplId(), h.master.ReplOffset()}}
+	cmd.WriteAny(sarr)
 	return nil
 }
