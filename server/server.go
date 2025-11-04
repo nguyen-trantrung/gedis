@@ -136,7 +136,7 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 			}
 
 			conn.SetDeadline(time.Now().Add(time.Hour))
-			cmd, err := resp.ParseStream(conn)
+			cmd, err := resp.ParseCmd(conn)
 			brk, cont := s.handleProtoError(err, conn)
 			if !brk {
 				cancel()

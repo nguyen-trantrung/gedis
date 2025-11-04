@@ -8,6 +8,10 @@ import (
 	"strconv"
 )
 
+type Value interface {
+	io.WriterTo
+}
+
 type Array struct {
 	Size  int
 	Items []any

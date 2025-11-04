@@ -26,8 +26,8 @@ func (o *Options) Slave() (*repl.Slave, error) {
 	return slave, nil
 }
 
-func (o *Options) Master() *repl.Master {
-	return repl.NewMaster()
+func (o *Options) Master(info *info.Info) *repl.Master {
+	return repl.NewMaster(info)
 }
 
 type Option func(o *Options)

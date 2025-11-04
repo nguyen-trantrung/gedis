@@ -19,15 +19,17 @@ func ParseTokens(tokens []Token) ([]Command, error) {
 	return parseTokens(tokens)
 }
 
-// ParseStream parses a single command from the byte stream.
+// ParseCmd parses a single command from the byte stream.
 // It stops right after a valid command is found, not until end of stream.
-func ParseStream(r io.Reader) (Command, error) {
-	return parseStream(r)
-}
-
-func parseStream(r io.Reader) (Command, error) {
+func ParseCmd(r io.Reader) (Command, error) {
 	p := parser{newStreamIter(r)}
 	return p.parseCmd()
+}
+
+// ParseValue parses a single RESP value from the byte stream.
+func ParseValue(r io.Reader) (any, error) {
+	p := parser{newStreamIter(r)}
+	return p.parse()
 }
 
 func parseTokens(tokens []Token) ([]Command, error) {

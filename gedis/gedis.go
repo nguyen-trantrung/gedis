@@ -24,10 +24,11 @@ type Instance struct {
 
 func NewInstance(cap int, opts ...Option) (*Instance, error) {
 	inst := &Instance{
-		cmdBuf: newBuffer[*Command](cap),
-		stop:   make(chan struct{}, 1),
-		dbs:    make([]*database, 16),
-		round:  0,
+		cmdBuf:   newBuffer[*Command](cap),
+		stop:     make(chan struct{}, 1),
+		dbs:      make([]*database, 16),
+		handlers: make(map[int]*handlers, 16),
+		round:    0,
 		options: &Options{
 			Role: "master",
 		},
@@ -47,7 +48,7 @@ func (i *Instance) init() error {
 
 	switch {
 	case i.isMaster():
-		i.master = i.options.Master()
+		i.master = i.options.Master(i.info)
 	case i.isSlave():
 		slave, err := i.options.Slave()
 		if err != nil {
@@ -76,6 +77,9 @@ func (i *Instance) isMaster() bool {
 
 func (i *Instance) Run(ctx context.Context) error {
 	log.Printf("gedis core is running")
+	if err := i.startReplicate(ctx); err != nil {
+		return fmt.Errorf("begin replication failed: %w", err)
+	}
 	go func() {
 		for {
 			select {
@@ -138,6 +142,27 @@ func (i *Instance) processCmd(cmd *Command) {
 		cmd.SetDone()
 		return
 	}
+}
+
+func (i *Instance) startReplicate(ctx context.Context) error {
+	if i.isSlave() {
+		return i.startSlave(ctx)
+	}
+
+	return i.startMaster(ctx)
+}
+
+func (i *Instance) startSlave(ctx context.Context) error {
+	log.Printf("begin handshake with master, master=%s", i.slave.MasterUrl())
+	if err := i.slave.Handshake(ctx); err != nil {
+		return fmt.Errorf("slave handshake failed: %w", err)
+	}
+	log.Printf("handshake with master successful, master=%s", i.slave.MasterUrl())
+	return nil
+}
+
+func (i *Instance) startMaster(_ context.Context) error {
+	return nil
 }
 
 func (i *Instance) Submit(ctx context.Context, cmds []*Command) error {

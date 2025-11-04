@@ -37,3 +37,13 @@ func bulkOrStr(str any) (string, error) {
 		return "", fmt.Errorf("unknown string: %+v", str)
 	}
 }
+
+func (c *Command) Array() Array {
+	arr := Array{
+		Size:  1 + len(c.Args),
+		Items: make([]any, 0, 1+len(c.Args)),
+	}
+	arr.Items = append(arr.Items, c.Cmd)
+	arr.Items = append(arr.Items, c.Args...)
+	return arr
+}

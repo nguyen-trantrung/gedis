@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"flag"
+	"log"
+	"os"
 
 	"github.com/ttn-nguyen42/gedis/gedis"
 	"github.com/ttn-nguyen42/gedis/server"
@@ -12,10 +14,12 @@ func main() {
 	ctx := server.CancelOnSignal(context.Background())
 	s, err := getServer()
 	if err != nil {
-		panic(err)
+		log.Println(err)
+		os.Exit(1)
 	}
 	if err := s.Run(ctx); err != nil {
-		panic(err)
+		log.Println(err)
+		os.Exit(1)
 	}
 }
 
