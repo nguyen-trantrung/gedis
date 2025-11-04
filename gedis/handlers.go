@@ -17,16 +17,18 @@ var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
 type handler func(conn *ConnState, cmd *Command) error
 
 type handlers struct {
-	db   *database
-	info *info.Info
-	hmap map[string]handler
+	isSlave bool
+	db      *database
+	info    *info.Info
+	hmap    map[string]handler
 }
 
-func newHandlers(db *database, info *info.Info) *handlers {
+func newHandlers(db *database, info *info.Info, isSlave bool) *handlers {
 	hdl := &handlers{
-		db:   db,
-		info: info,
-		hmap: nil,
+		db:      db,
+		info:    info,
+		hmap:    nil,
+		isSlave: isSlave,
 	}
 	hdl.init()
 	return hdl
@@ -34,24 +36,26 @@ func newHandlers(db *database, info *info.Info) *handlers {
 
 func (h *handlers) init() {
 	h.hmap = map[string]handler{
-		"ping":    h.handlePing,
-		"echo":    h.handleEcho,
-		"select":  h.handleSelect,
-		"set":     h.handleSet,
-		"get":     h.handleGet,
-		"rpush":   h.handleRPush,
-		"lpush":   h.handleLPush,
-		"lpop":    h.handleLPop,
-		"rpop":    h.handleRPop,
-		"lrange":  h.handleLRange,
-		"llen":    h.handleLLen,
-		"lindex":  h.handleLIndex,
-		"blpop":   h.handleBlockLpop,
-		"incr":    h.handleIncr,
-		"multi":   h.handleMulti,
-		"exec":    h.handleExec,
-		"discard": h.handleDiscard,
-		"info":    h.handleInfo,
+		"ping":     h.handlePing,
+		"echo":     h.handleEcho,
+		"select":   h.handleSelect,
+		"set":      h.handleSet,
+		"get":      h.handleGet,
+		"rpush":    h.handleRPush,
+		"lpush":    h.handleLPush,
+		"lpop":     h.handleLPop,
+		"rpop":     h.handleRPop,
+		"lrange":   h.handleLRange,
+		"llen":     h.handleLLen,
+		"lindex":   h.handleLIndex,
+		"blpop":    h.handleBlockLpop,
+		"incr":     h.handleIncr,
+		"multi":    h.handleMulti,
+		"exec":     h.handleExec,
+		"discard":  h.handleDiscard,
+		"info":     h.handleInfo,
+		"replconf": h.handleReplConf,
+		"psync":    h.handlePsync,
 	}
 }
 
@@ -665,5 +669,26 @@ func (h *handlers) handleInfo(conn *ConnState, cmd *Command) error {
 	str := h.info.String()
 	bs := resp.BulkStr{Size: len(str), Value: str}
 	cmd.WriteAny(bs)
+	return nil
+}
+
+func (h *handlers) handleReplConf(conn *ConnState, cmd *Command) error {
+	defer cmd.SetDone()
+	if h.checkInTx(conn, cmd) {
+		return nil
+	}
+	cmd.WriteAny("OK")
+	return nil
+}
+
+func (h *handlers) handlePsync(conn *ConnState, cmd *Command) error {
+	defer cmd.SetDone()
+	if h.checkInTx(conn, cmd) {
+		return fmt.Errorf("PSYNC cannot be in a transaction")
+	}
+	if h.isSlave {
+		return fmt.Errorf("PSYNC invalid for slave")
+	}
+	cmd.WriteAny("OK")
 	return nil
 }
