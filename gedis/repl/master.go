@@ -8,6 +8,11 @@ import (
 	"github.com/ttn-nguyen42/gedis/gedis/info"
 )
 
+type slaveData struct {
+	theirPort int
+	proto     string
+}
+
 var seededRand = newSeededRand()
 
 func newSeededRand() *rand.Rand {
@@ -19,6 +24,7 @@ type Master struct {
 	replId     string
 	replOffset int64
 	info       *info.Info
+	slaves     map[string]*slaveData
 }
 
 func NewMaster(info *info.Info) *Master {

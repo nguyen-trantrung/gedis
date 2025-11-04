@@ -43,10 +43,11 @@ func newHostPort(url string) (*hostPort, error) {
 type Slave struct {
 	master *hostPort
 	client *resp_client.Client
+	myPort int
 }
 
-func NewSlave(masterUrl string) (*Slave, error) {
-	slave := &Slave{}
+func NewSlave(masterUrl string, myPort int) (*Slave, error) {
+	slave := &Slave{myPort: myPort}
 	if err := slave.init(masterUrl); err != nil {
 		return nil, err
 	}
@@ -81,12 +82,15 @@ func (s *Slave) Handshake(ctx context.Context) error {
 		return fmt.Errorf("ping master err: %w", err)
 	}
 	log.Printf("handshake ping master success")
-	// if err := s.replConf(ctx); err != nil {
-	// 	return fmt.Errorf("replconf master err: %w", err)
-	// }
-	// if err := s.replConf(ctx); err != nil {
-	// 	return fmt.Errorf("replconf master err: %w", err)
-	// }
+
+	lp := []any{"listening-port", fmt.Sprintf("%d", s.myPort)}
+	if err := s.replConf(ctx, lp); err != nil {
+		return fmt.Errorf("replconf master err: %w", err)
+	}
+	capa := []any{"capa", "psync2"}
+	if err := s.replConf(ctx, capa); err != nil {
+		return fmt.Errorf("replconf master err: %w", err)
+	}
 	// if err := s.psync(ctx); err != nil {
 	// 	return fmt.Errorf("psync master err: %w", err)
 	// }
@@ -99,8 +103,8 @@ func (s *Slave) ping(ctx context.Context) error {
 	return err
 }
 
-func (s *Slave) replConf(ctx context.Context) error {
-	cmd := resp.Command{Cmd: "REPLCONF", Args: []any{"listening-port", 6379, "capa", "eof"}}
+func (s *Slave) replConf(ctx context.Context, args []any) error {
+	cmd := resp.Command{Cmd: "REPLCONF", Args: args}
 	_, err := s.client.SendSync(ctx, &cmd)
 	return err
 }

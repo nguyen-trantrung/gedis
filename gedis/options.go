@@ -10,6 +10,7 @@ import (
 type Options struct {
 	Role      string
 	MasterURL string
+	MyPort    int
 }
 
 func (o *Options) Info() *info.Info {
@@ -19,7 +20,7 @@ func (o *Options) Info() *info.Info {
 }
 
 func (o *Options) Slave() (*repl.Slave, error) {
-	slave, err := repl.NewSlave(o.MasterURL)
+	slave, err := repl.NewSlave(o.MasterURL, o.MyPort)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create slave: %w", err)
 	}
@@ -38,9 +39,10 @@ func AsMaster() Option {
 	}
 }
 
-func AsSlave(masterURL string) Option {
+func AsSlave(masterURL string, myPort int) Option {
 	return func(o *Options) {
 		o.Role = "slave"
 		o.MasterURL = masterURL
+		o.MyPort = myPort
 	}
 }
