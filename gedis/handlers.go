@@ -525,6 +525,10 @@ func (h *handlers) handleBlockLpop(conn *ConnState, cmd *Command) error {
 }
 
 func (h *handlers) resolveBlockLpop(key string, cmd *Command) (ok bool) {
+	if cmd.HasTimedOut() {
+		return true
+	}
+
 	list, exists := h.db.GetList(key)
 	if !exists {
 		return false
