@@ -698,7 +698,8 @@ func (h *handlers) handlePsync(conn *ConnState, cmd *Command) error {
 	if h.isSlave {
 		return fmt.Errorf("PSYNC invalid for slave")
 	}
-	sarr := resp.Array{Size: 3, Items: []any{"PSYNC", h.master.ReplId(), h.master.ReplOffset()}}
+	str := fmt.Sprintf("FULLRESYNC %s %d", h.master.ReplId(), h.master.ReplOffset())
+	sarr := resp.BulkStr{Size: len(str), Value: str}
 	cmd.WriteAny(sarr)
 	return nil
 }
