@@ -1,15 +1,19 @@
 package gedis
 
+import "net"
+
 type ConnState struct {
 	InTransaction bool
 	Tx            []*Command
 	DbNumber      int
+	Conn          net.Conn
 }
 
-func NewConnState() *ConnState {
+func NewConnState(conn net.Conn) *ConnState {
 	return &ConnState{
 		InTransaction: false,
 		DbNumber:      0,
-		Tx: make([]*Command, 0),
+		Tx:            make([]*Command, 0),
+		Conn:          conn,
 	}
 }

@@ -34,6 +34,15 @@ func (c *Client) connect() error {
 	return nil
 }
 
+func NewClientFromConn(conn net.Conn) *Client {
+	addr := conn.RemoteAddr().(*net.TCPAddr)
+	return &Client{
+		host: addr.IP.String(),
+		port: addr.Port,
+		conn: conn,
+	}
+}
+
 func (c *Client) Close() error {
 	if c.conn != nil {
 		return c.conn.Close()
@@ -55,4 +64,23 @@ func (c *Client) SendSync(ctx context.Context, cmd *resp.Command) (any, error) {
 		return nil, fmt.Errorf("command error: %s", valerr.Value)
 	}
 	return out, nil
+}
+
+func (c *Client) SendBinary(ctx context.Context, data []byte) error {
+	proto := fmt.Sprintf("$%d\r\n", len(data))
+	if _, err := c.conn.Write([]byte(proto)); err != nil {
+		return err
+	}
+	if _, err := c.conn.Write(data); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *Client) SendForget(ctx context.Context, cmd *resp.Command) error {
+	arr := cmd.Array()
+	if _, err := arr.WriteTo(c.conn); err != nil {
+		return err
+	}
+	return nil
 }

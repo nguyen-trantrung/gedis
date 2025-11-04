@@ -14,6 +14,7 @@ type Command struct {
 	ConnState      *ConnState
 	Cmd            resp.Command
 	Addr           string
+	Defer          func()
 	out            *bytes.Buffer
 	done           bool
 	timedOut       time.Time
@@ -26,8 +27,13 @@ func NewCommand(cmd resp.Command, state *ConnState, addr string) *Command {
 		Addr:           addr,
 		ConnState:      state,
 		done:           false,
+		Defer:          nil,
 		defTimedOutOut: nil,
 	}
+}
+
+func (c *Command) SetDefer(f func()) {
+	c.Defer = f
 }
 
 func (c *Command) SetDone() {

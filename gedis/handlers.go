@@ -686,12 +686,45 @@ func (h *handlers) handleReplConf(conn *ConnState, cmd *Command) error {
 	if h.checkInTx(conn, cmd) {
 		return nil
 	}
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	subcmd, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(subcmd) {
+	case "listening-port":
+		portnum, err := parseInt(args[1])
+		if err != nil {
+			return fmt.Errorf("%w: invalid port number: %w", ErrInvalidArguments, err)
+		}
+		err = h.master.AddSlave(conn.Conn, portnum)
+		if err != nil {
+			return err
+		}
+	case "capa":
+		proto, err := parseBulkStr(args[1])
+		if err != nil {
+			return fmt.Errorf("%w: invalid capability: %w", ErrInvalidArguments, err)
+		}
+		exists := h.master.SetSlaveProto(conn.Conn, proto)
+		if !exists {
+			return fmt.Errorf("%w: slave not registered yet", ErrInvalidArguments)
+		}
+	default:
+		return fmt.Errorf("%w: unknown REPLCONF subcommand '%s'", ErrInvalidArguments, subcmd)
+	}
 	cmd.WriteAny("OK")
 	return nil
 }
 
 func (h *handlers) handlePsync(conn *ConnState, cmd *Command) error {
-	defer cmd.SetDone()
+	defer func() {
+		cmd.SetDone()
+
+	}()
 	if h.checkInTx(conn, cmd) {
 		return fmt.Errorf("PSYNC cannot be in a transaction")
 	}
@@ -701,5 +734,21 @@ func (h *handlers) handlePsync(conn *ConnState, cmd *Command) error {
 	str := fmt.Sprintf("FULLRESYNC %s %d", h.master.ReplId(), h.master.ReplOffset())
 	sarr := resp.BulkStr{Size: len(str), Value: str}
 	cmd.WriteAny(sarr)
+
+	cmd.SetDefer(func() {
+		_, found := h.master.GetSlave(conn.Conn.RemoteAddr().String())
+		if found {
+			go h.resolveInitRdbSync(conn)
+		}
+	})
+
 	return nil
+}
+
+func (h *handlers) resolveInitRdbSync(conn *ConnState) {
+	addr := conn.Conn.RemoteAddr().String()
+	err := h.master.InitialRdbSync(addr)
+	if err != nil {
+		log.Printf("rdb sync failed, addr=%s, err=%s", addr, err)
+	}
 }

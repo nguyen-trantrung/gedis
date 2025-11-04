@@ -111,7 +111,7 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 
 	state := &connState{
 		pending:   make([]*gedis.Command, 0),
-		connState: gedis.NewConnState(),
+		connState: gedis.NewConnState(conn),
 	}
 
 	wg := sync.WaitGroup{}
@@ -183,6 +183,9 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 						log.Printf("write err to TCP, err=%s, addr=%s", err, conn.RemoteAddr())
 					} else {
 						log.Printf("written to TCP stream, addr=%s n=%d", conn.RemoteAddr(), respn)
+					}
+					if cmd.Defer != nil {
+						cmd.Defer()
 					}
 					state.pending = state.pending[1:]
 				}
