@@ -154,9 +154,9 @@ func (i *Instance) startReplicate(ctx context.Context) error {
 
 func (i *Instance) startSlave(ctx context.Context) error {
 	log.Printf("begin handshake with master, master=%s", i.slave.MasterUrl())
-	// if err := i.slave.Handshake(ctx); err != nil {
-	// 	return fmt.Errorf("slave handshake failed: %w", err)
-	// }
+	if err := i.slave.Handshake(ctx); err != nil {
+		return fmt.Errorf("slave handshake failed: %w", err)
+	}
 	log.Printf("handshake with master successful, master=%s", i.slave.MasterUrl())
 	return nil
 }

@@ -3,11 +3,12 @@ package repl
 import (
 	"context"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 
 	"github.com/ttn-nguyen42/gedis/resp"
-	"github.com/ttn-nguyen42/gedis/resp/client"
+	resp_client "github.com/ttn-nguyen42/gedis/resp/client"
 )
 
 type hostPort struct {
@@ -79,15 +80,16 @@ func (s *Slave) Handshake(ctx context.Context) error {
 	if err := s.ping(ctx); err != nil {
 		return fmt.Errorf("ping master err: %w", err)
 	}
-	if err := s.replConf(ctx); err != nil {
-		return fmt.Errorf("replconf master err: %w", err)
-	}
-	if err := s.replConf(ctx); err != nil {
-		return fmt.Errorf("replconf master err: %w", err)
-	}
-	if err := s.psync(ctx); err != nil {
-		return fmt.Errorf("psync master err: %w", err)
-	}
+	log.Printf("handshake ping master success")
+	// if err := s.replConf(ctx); err != nil {
+	// 	return fmt.Errorf("replconf master err: %w", err)
+	// }
+	// if err := s.replConf(ctx); err != nil {
+	// 	return fmt.Errorf("replconf master err: %w", err)
+	// }
+	// if err := s.psync(ctx); err != nil {
+	// 	return fmt.Errorf("psync master err: %w", err)
+	// }
 	return nil
 }
 
