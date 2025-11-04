@@ -8,14 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ttn-nguyen42/gedis/gedis/info"
 	"github.com/ttn-nguyen42/gedis/resp"
 )
 
 var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
 
-type Handler func(db *database, cmd *Command, conn *ConnState) error
+type Handler func(db *database, cmd *Command, conn *ConnState, info *info.Info) error
 
-// Utility functions for parsing arguments
 func parseBulkStr(arg any) (string, error) {
 	bulkStr, ok := arg.(resp.BulkStr)
 	if !ok {
@@ -75,6 +75,7 @@ func init() {
 		"multi":   handleMulti,
 		"exec":    handleExec,
 		"discard": handleDiscard,
+		"info":    handleInfo,
 	}
 }
 
@@ -87,7 +88,7 @@ func selectHandler(cmd *Command) (Handler, error) {
 	return hdlr, nil
 }
 
-func handlePing(db *database, cmd *Command, conn *ConnState) error {
+func handlePing(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	defer cmd.SetDone()
 	if checkInTx(cmd, conn) {
 		return nil
@@ -96,7 +97,7 @@ func handlePing(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleEcho(db *database, cmd *Command, conn *ConnState) error {
+func handleEcho(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	defer cmd.SetDone()
 	if checkInTx(cmd, conn) {
 		return nil
@@ -107,7 +108,7 @@ func handleEcho(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleSelect(db *database, cmd *Command, conn *ConnState) error {
+func handleSelect(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	if len(cmd.Cmd.Args) < 1 {
 		return fmt.Errorf("%w: missing database number", ErrInvalidArguments)
 	}
@@ -155,7 +156,7 @@ func checkExpiry(args []any) (int, bool, error) {
 	return ttl * mod, true, nil
 }
 
-func handleSet(db *database, cmd *Command, conn *ConnState) error {
+func handleSet(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -178,7 +179,7 @@ func handleSet(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleGet(db *database, cmd *Command, conn *ConnState) error {
+func handleGet(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -200,7 +201,7 @@ func handleGet(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleRPush(db *database, cmd *Command, conn *ConnState) error {
+func handleRPush(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -234,7 +235,7 @@ func handleRPush(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleLPush(db *database, cmd *Command, conn *ConnState) error {
+func handleLPush(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -268,7 +269,7 @@ func handleLPush(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleLPop(db *database, cmd *Command, conn *ConnState) error {
+func handleLPop(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -325,7 +326,7 @@ func handleLPop(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleRPop(db *database, cmd *Command, conn *ConnState) error {
+func handleRPop(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -382,7 +383,7 @@ func handleRPop(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleLRange(db *database, cmd *Command, conn *ConnState) error {
+func handleLRange(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 3 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -417,7 +418,7 @@ func handleLRange(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleLLen(db *database, cmd *Command, conn *ConnState) error {
+func handleLLen(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -439,7 +440,7 @@ func handleLLen(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleLIndex(db *database, cmd *Command, conn *ConnState) error {
+func handleLIndex(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -473,7 +474,7 @@ func handleLIndex(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleBlockLpop(db *database, cmd *Command, conn *ConnState) error {
+func handleBlockLpop(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -521,7 +522,7 @@ func resolveBlockLpop(db *database, key string, cmd *Command) (ok bool) {
 	return true
 }
 
-func handleIncr(db *database, cmd *Command, conn *ConnState) error {
+func handleIncr(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	args := cmd.Cmd.Args
 	if len(args) != 1 {
 		log.Println(args)
@@ -560,7 +561,7 @@ func handleIncr(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleMulti(db *database, cmd *Command, conn *ConnState) error {
+func handleMulti(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	defer cmd.SetDone()
 	if conn.InTransaction {
 		return fmt.Errorf("MULTI calls cannot be nested")
@@ -570,7 +571,7 @@ func handleMulti(db *database, cmd *Command, conn *ConnState) error {
 	return nil
 }
 
-func handleExec(db *database, cmd *Command, conn *ConnState) error {
+func handleExec(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	defer cmd.SetDone()
 	if !conn.InTransaction {
 		return fmt.Errorf("EXEC without MULTI")
@@ -587,7 +588,7 @@ func handleExec(db *database, cmd *Command, conn *ConnState) error {
 		if err != nil {
 			return err
 		}
-		err = hdl(db, op, conn)
+		err = hdl(db, op, conn, info)
 		if err != nil {
 			cmd.SetDone()
 			bufs = append(bufs, err)
@@ -611,7 +612,7 @@ func checkInTx(cmd *Command, conn *ConnState) bool {
 	return false
 }
 
-func handleDiscard(db *database, cmd *Command, conn *ConnState) error {
+func handleDiscard(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
 	defer cmd.SetDone()
 
 	if !conn.InTransaction {
@@ -621,5 +622,34 @@ func handleDiscard(db *database, cmd *Command, conn *ConnState) error {
 
 	conn.InTransaction = false
 	conn.Tx = make([]*Command, 0)
+	return nil
+}
+
+func handleInfo(db *database, cmd *Command, conn *ConnState, info *info.Info) error {
+	defer cmd.SetDone()
+	if checkInTx(cmd, conn) {
+		return fmt.Errorf("INFO not available during transaction")
+	}
+	args := cmd.Cmd.Args
+	if len(args) > 0 {
+		section, err := parseBulkStr(args[0])
+		if err != nil {
+			return err
+		}
+		fields := info.Fields()
+		for _, field := range fields {
+			if strings.EqualFold(section, field.Name) {
+				str := fmt.Sprintf("# %s\n%v\n", field.Name, field.Value)
+				bs := resp.BulkStr{Size: len(str), Value: str}
+				cmd.WriteAny(bs)
+				return nil
+			}
+		}
+		return fmt.Errorf("unknown section '%s'", section)
+	}
+
+	str := info.String()
+	bs := resp.BulkStr{Size: len(str), Value: str}
+	cmd.WriteAny(bs)
 	return nil
 }

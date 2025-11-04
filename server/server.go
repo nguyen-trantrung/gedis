@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/ttn-nguyen42/gedis/gedis"
+	"github.com/ttn-nguyen42/gedis/gedis/info"
 	"github.com/ttn-nguyen42/gedis/resp"
 )
 
@@ -22,15 +23,17 @@ type Server struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 	core *gedis.Instance
+	info *info.Info
 }
 
-func NewServer(host string, port int) *Server {
+func NewServer(host string, port int, opts ...gedis.Option) *Server {
 	s := &Server{
 		host: host,
 		port: port,
 		done: make(chan struct{}, 1),
-		core: gedis.NewInstance(256),
+		core: gedis.NewInstance(256, opts...),
 	}
+	s.info = s.core.Info()
 	return s
 }
 
@@ -118,6 +121,9 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 
 	go func() {
 		defer wg.Done()
+		s.info.GetClients().IncrConnectedClients()
+		defer s.info.GetClients().DecrConnectedClients()
+
 		for {
 			select {
 			case <-ctx.Done():

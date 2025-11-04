@@ -5,22 +5,65 @@ import (
 	"fmt"
 	"log"
 	"time"
+
+	"github.com/ttn-nguyen42/gedis/gedis/info"
 )
 
-type Instance struct {
-	cmdBuf *circular[*Command]
-	stop   chan struct{}
-	dbs    []*database
-	round  int
+type Options struct {
+	Role      string
+	MasterURL string
 }
 
-func NewInstance(cap int) *Instance {
-	return &Instance{
+func (o *Options) Info() *info.Info {
+	inf := info.NewInfo(version)
+	inf.Replication.SetRole(o.Role)
+	return inf
+}
+
+type Option func(o *Options)
+
+func AsMaster() Option {
+	return func(o *Options) {
+		o.Role = "master"
+	}
+}
+
+func AsSlave(masterURL string) Option {
+	return func(o *Options) {
+		o.Role = "slave"
+		o.MasterURL = masterURL
+	}
+}
+
+type Instance struct {
+	info    *info.Info
+	cmdBuf  *circular[*Command]
+	stop    chan struct{}
+	dbs     []*database
+	round   int
+	options *Options
+}
+
+func NewInstance(cap int, opts ...Option) *Instance {
+	inst := &Instance{
 		cmdBuf: newBuffer[*Command](cap),
 		stop:   make(chan struct{}, 1),
 		dbs:    make([]*database, 16),
 		round:  0,
+		options: &Options{
+			Role: "master",
+		},
 	}
+	for _, opt := range opts {
+		opt(inst.options)
+	}
+	inst.info = inst.options.Info()
+	log.Printf("gedis instance created with role=%s", inst.options.Role)
+	return inst
+}
+
+func (i *Instance) Info() *info.Info {
+	return i.info
 }
 
 func (i *Instance) Run(ctx context.Context) error {
@@ -89,7 +132,7 @@ func (i *Instance) processCmd(cmd *Command) {
 		return
 	}
 
-	if err := hdl(dbi, cmd, cmd.ConnState); err != nil {
+	if err := hdl(dbi, cmd, cmd.ConnState, i.info); err != nil {
 		cmd.WriteAny(err)
 		cmd.SetDone()
 		return
