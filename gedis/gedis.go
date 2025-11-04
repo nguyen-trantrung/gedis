@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/ttn-nguyen42/gedis/gedis/info"
+	"github.com/ttn-nguyen42/gedis/gedis/repl"
 )
 
 type Options struct {
@@ -18,6 +19,13 @@ func (o *Options) Info() *info.Info {
 	inf := info.NewInfo(version)
 	inf.Replication.SetRole(o.Role)
 	return inf
+}
+
+func (o *Options) Repl() (*repl.Repl, error) {
+	if o.Role != "slave" {
+		return nil, nil
+	}
+	return repl.NewRepl(o.MasterURL)
 }
 
 type Option func(o *Options)
@@ -42,9 +50,10 @@ type Instance struct {
 	dbs     []*database
 	round   int
 	options *Options
+	repl    *repl.Repl
 }
 
-func NewInstance(cap int, opts ...Option) *Instance {
+func NewInstance(cap int, opts ...Option) (*Instance, error) {
 	inst := &Instance{
 		cmdBuf: newBuffer[*Command](cap),
 		stop:   make(chan struct{}, 1),
@@ -58,8 +67,14 @@ func NewInstance(cap int, opts ...Option) *Instance {
 		opt(inst.options)
 	}
 	inst.info = inst.options.Info()
+	repl, err := inst.options.Repl()
+	if err != nil {
+		return nil, fmt.Errorf("failed to setup replication: %w", err)
+	}
+	inst.repl = repl
+
 	log.Printf("gedis instance created with role=%s", inst.options.Role)
-	return inst
+	return inst, nil
 }
 
 func (i *Instance) Info() *info.Info {

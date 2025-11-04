@@ -36,5 +36,5 @@ func getServer() (*server.Server, error) {
 		opts = append(opts, gedis.AsSlave(replicaOf))
 	}
 
-	return server.NewServer(host, port, opts...), nil
+	return server.NewServer(host, port, opts...)
 }

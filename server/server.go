@@ -26,15 +26,19 @@ type Server struct {
 	info *info.Info
 }
 
-func NewServer(host string, port int, opts ...gedis.Option) *Server {
+func NewServer(host string, port int, opts ...gedis.Option) (*Server, error) {
+	inst, err := gedis.NewInstance(256, opts...)
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
 		host: host,
 		port: port,
 		done: make(chan struct{}, 1),
-		core: gedis.NewInstance(256, opts...),
+		core: inst,
 	}
 	s.info = s.core.Info()
-	return s
+	return s, nil
 }
 
 func (s *Server) Run(ctx context.Context) error {
