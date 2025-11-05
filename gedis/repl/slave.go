@@ -202,8 +202,6 @@ func (s *Slave) beginHandleSyncs(baseCtx context.Context) error {
 			s.state.mu.Unlock()
 
 			s.changesBuf.Send(ctx, replCmd)
-
-			s.IncrOffset(cmd.Size)
 		}
 	}()
 
@@ -221,7 +219,8 @@ func (s *Slave) beginHandleSyncs(baseCtx context.Context) error {
 				cmd := s.state.pending[0]
 
 				if cmd.IsDone() || cmd.HasTimedOut() {
-					if cmd.Len() >= 0 {
+					l := cmd.Len()
+					if l >= 0 {
 						resp, err := cmd.WriteTo(s.connState.Conn)
 						if err != nil {
 							log.Printf("resp back to master err to TCP, err=%s, addr=%s", err, s.connState.Conn.RemoteAddr())
@@ -231,6 +230,10 @@ func (s *Slave) beginHandleSyncs(baseCtx context.Context) error {
 					}
 					if cmd.Defer != nil {
 						cmd.Defer()
+					}
+
+					if !cmd.OmitOffset() {
+						s.IncrOffset(l)
 					}
 					s.state.pending = s.state.pending[1:]
 				}

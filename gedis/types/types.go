@@ -20,6 +20,7 @@ type Command struct {
 	timedOut       time.Time
 	defTimedOutOut any
 	isRepl         bool
+	omitOffset     bool
 }
 
 func NewCommand(cmd resp.Command, state *ConnState, addr string) *Command {
@@ -31,6 +32,7 @@ func NewCommand(cmd resp.Command, state *ConnState, addr string) *Command {
 		Defer:          nil,
 		defTimedOutOut: nil,
 		isRepl:         false,
+		omitOffset:     true,
 	}
 }
 
@@ -43,6 +45,7 @@ func NewReplCommand(cmd resp.Command, state *ConnState, addr string) *Command {
 		Defer:          nil,
 		defTimedOutOut: nil,
 		isRepl:         true,
+		omitOffset:     false,
 	}
 }
 
@@ -52,6 +55,14 @@ func (c *Command) SetDefer(f func()) {
 
 func (c *Command) SetDone() {
 	c.done = true
+}
+
+func (c *Command) OmitOffset() bool {
+	return c.omitOffset
+}
+
+func (c *Command) SetOmitOffset(omit bool) {
+	c.omitOffset = omit
 }
 
 func (c *Command) IsDone() bool {

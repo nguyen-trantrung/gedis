@@ -809,7 +809,10 @@ func (h *handlers) handleInfo(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
-	defer cmd.SetDone()
+	defer func() {
+		cmd.SetDone()
+		cmd.SetOmitOffset(true)
+	}()
 
 	if h.checkInTx(cmd) {
 		return nil
@@ -864,7 +867,7 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 
 		_ = ackOffset
 
-		res := resp.Command{Cmd: "REPLCONF", Args: []any{"ACK", fmt.Sprintf("%d", 0)}}
+		res := resp.Command{Cmd: "REPLCONF", Args: []any{"ACK", fmt.Sprintf("%d", h.slave.ReplOffset())}}
 		cmd.WriteAny(res.Array())
 	case "capa":
 		if h.isSlave {
@@ -895,7 +898,7 @@ func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
 	if h.isSlave {
 		return fmt.Errorf("PSYNC invalid for slave")
 	}
-	str := fmt.Sprintf("FULLRESYNC %s %d", h.master.ReplId(), 0) //TODO
+	str := fmt.Sprintf("FULLRESYNC %s %d", h.master.ReplId(), h.master.ReplOffset())
 	sarr := resp.BulkStr{Size: len(str), Value: str}
 	cmd.WriteAny(sarr)
 
