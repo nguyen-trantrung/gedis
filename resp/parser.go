@@ -1,7 +1,6 @@
 package resp
 
 import (
-	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -13,17 +12,19 @@ import (
 var ErrInvalidToken = fmt.Errorf("invalid token")
 var ErrProtocolError = fmt.Errorf("protocol error")
 
-// ParseTokens allows parsing a list of tokens which can include
-// multiple commands at once.
-func ParseTokens(tokens []Token) ([]Command, error) {
-	return parseTokens(tokens)
-}
-
 // ParseCmd parses a single command from the byte stream.
 // It stops right after a valid command is found, not until end of stream.
 func ParseCmd(r io.Reader) (Command, error) {
-	p := parser{newStreamIter(r)}
-	return p.parseCmd()
+	sc := &scanner{str: r, bytesRead: 0}
+	p := parser{newStreamIterFromScanner(sc)}
+	sc.resetBytesRead()
+	cmd, err := p.parseCmd()
+	if err != nil {
+		return cmd, err
+	}
+	bytesRead := sc.getBytesRead()
+	cmd.Size = bytesRead
+	return cmd, err
 }
 
 // ParseValue parses a single RESP value from the byte stream.
@@ -36,18 +37,13 @@ func ParseValue(r io.Reader) (any, error) {
 // RDB files are sent in the format: $<length>\r\n<binary_contents>
 // Unlike bulk strings, they don't have a trailing \r\n
 func ParseRDBFile(r io.Reader) ([]byte, error) {
-	sc := &scanner{str: bufio.NewReader(r)}
+	sc := &scanner{str: r}
 	iter := newStreamIterFromScanner(sc)
 	return parseRDBFileStream(iter, sc.str)
 }
 
-func parseTokens(tokens []Token) ([]Command, error) {
-	p := parser{&listIter{tokens: tokens}}
-	return p.parseCmds()
-}
-
 type parser struct {
-	Iter
+	*streamIter
 }
 
 func (p *parser) parseCmds() ([]Command, error) {
@@ -67,7 +63,7 @@ func (p *parser) parseCmds() ([]Command, error) {
 }
 
 func (p *parser) parseCmd() (Command, error) {
-	curr, err := p.Peek()
+	curr, err := p.peek()
 	if err != nil {
 		var opErr *net.OpError
 		if err == io.EOF || errors.As(err, &opErr) {
@@ -92,7 +88,7 @@ func (p *parser) parseCmd() (Command, error) {
 		if err != nil {
 			return Command{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
-		p.Next()
+		p.next()
 		return cmd, nil
 	default:
 		return Command{}, fmt.Errorf("%w: invalid starting token: %v", ErrInvalidToken, curr.Type)
@@ -100,7 +96,7 @@ func (p *parser) parseCmd() (Command, error) {
 }
 
 func (p *parser) parse() (any, error) {
-	curr, err := p.Next()
+	curr, err := p.next()
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +182,7 @@ func (p *parser) parseBulkString(size int) (string, error) {
 		if i > 0 {
 			sb.WriteString("\r\n")
 		}
-		nt, err := p.Next()
+		nt, err := p.nextLiteral()
 		if err != nil {
 			if err == io.EOF {
 				return "", err
@@ -208,7 +204,7 @@ func (p *parser) parseVerbatimString(size int) (string, error) {
 		return "", nil
 	}
 	sb := strings.Builder{}
-	encl, err := p.Next()
+	encl, err := p.next()
 	if err != nil {
 		if err == io.EOF {
 			return "", err
@@ -225,7 +221,7 @@ func (p *parser) parseVerbatimString(size int) (string, error) {
 		i := 0
 		for sb.Len() < size {
 			sb.WriteString("\r\n")
-			nt, err := p.Next()
+			nt, err := p.nextLiteral()
 			if err != nil {
 				if err == io.EOF {
 					return "", err
@@ -304,9 +300,9 @@ func (p *parser) parseSet(n int) (Set, error) {
 	return s, nil
 }
 
-func parseRDBFileStream(iter Iter, rawIo io.Reader) ([]byte, error) {
+func parseRDBFileStream(iter *streamIter, rawIo io.Reader) ([]byte, error) {
 	// First, read the $<length>\r\n part using the normal token parsing
-	curr, err := iter.Next()
+	curr, err := iter.next()
 	if err != nil {
 		return nil, err
 	}
@@ -337,35 +333,6 @@ func parseRDBFileStream(iter Iter, rawIo io.Reader) ([]byte, error) {
 	return data, nil
 }
 
-type Iter interface {
-	Next() (Token, error)
-	Peek() (Token, error)
-}
-
-type listIter struct {
-	tokens []Token
-	curr   int
-}
-
-func (p *listIter) Next() (Token, error) {
-	if p.isEnd() {
-		return Token{}, io.EOF
-	}
-	p.curr += 1
-	return p.tokens[p.curr-1], nil
-}
-
-func (p *listIter) Peek() (Token, error) {
-	if p.isEnd() {
-		return Token{}, io.EOF
-	}
-	return p.tokens[p.curr], nil
-}
-
-func (p *listIter) isEnd() bool {
-	return p.curr >= len(p.tokens)
-}
-
 type streamIter struct {
 	sc        *scanner
 	lastToken *Token
@@ -385,7 +352,7 @@ func newStreamIterFromScanner(sc *scanner) *streamIter {
 	return si
 }
 
-func (p *streamIter) Next() (Token, error) {
+func (p *streamIter) next() (Token, error) {
 	if p.lastToken != nil {
 		tok := *p.lastToken
 		p.lastToken = nil
@@ -402,7 +369,25 @@ func (p *streamIter) Next() (Token, error) {
 	return tok, nil
 }
 
-func (p *streamIter) Peek() (Token, error) {
+func (p *streamIter) nextLiteral() (Token, error) {
+	if p.lastToken != nil {
+		tok := *p.lastToken
+		p.lastToken = nil
+		return tok, nil
+	}
+	l, err := p.sc.nextLine()
+	if err != nil {
+		return Token{}, err
+	}
+	tok := Token{
+		Type:    TokenTypeValue,
+		Literal: string(l.l),
+		Size:    len(l.l),
+	}
+	return tok, nil
+}
+
+func (p *streamIter) peek() (Token, error) {
 	if p.lastToken != nil {
 		return *p.lastToken, nil
 	}
@@ -417,4 +402,17 @@ func (p *streamIter) Peek() (Token, error) {
 	p.lastToken = new(Token)
 	*p.lastToken = tok
 	return tok, nil
+}
+
+func (p *streamIter) readBytes(n int) ([]byte, error) {
+	buf := make([]byte, n)
+	totalRead := 0
+	for totalRead < n {
+		readNow, err := p.sc.str.Read(buf[totalRead:])
+		if err != nil {
+			return nil, err
+		}
+		totalRead += readNow
+	}
+	return buf, nil
 }

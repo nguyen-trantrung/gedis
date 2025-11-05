@@ -1,6 +1,7 @@
 package resp_client
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log"
@@ -12,7 +13,8 @@ import (
 type Client struct {
 	host string
 	port int
-	net.Conn
+	conn net.Conn
+	*bufio.Reader
 }
 
 func NewClient(host string, port int) (*Client, error) {
@@ -31,22 +33,24 @@ func (c *Client) connect() error {
 	if err != nil {
 		return err
 	}
-	c.Conn = conn
+	c.conn = conn
+	c.Reader = bufio.NewReader(conn)
 	return nil
 }
 
 func NewClientFromConn(conn net.Conn) *Client {
 	addr := conn.RemoteAddr().(*net.TCPAddr)
 	return &Client{
-		host: addr.IP.String(),
-		port: addr.Port,
-		Conn: conn,
+		host:   addr.IP.String(),
+		port:   addr.Port,
+		conn:   conn,
+		Reader: bufio.NewReader(conn),
 	}
 }
 
 func (c *Client) Close() error {
-	if c.Conn != nil {
-		return c.Close()
+	if c.conn != nil {
+		return c.conn.Close()
 	}
 	return nil
 }
@@ -54,7 +58,7 @@ func (c *Client) Close() error {
 func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, error) {
 	arr := cmd.Array()
 	total := 0
-	if n, err := arr.WriteTo(c); err != nil {
+	if n, err := arr.WriteTo(c.conn); err != nil {
 		return nil, 0, err
 	} else {
 		total += int(n)
@@ -73,13 +77,13 @@ func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, erro
 func (c *Client) SendBinary(ctx context.Context, data []byte) (int, error) {
 	proto := fmt.Sprintf("$%d\r\n", len(data))
 	total := 0
-	n, err := c.Write([]byte(proto))
+	n, err := c.conn.Write([]byte(proto))
 	if err != nil {
 		return 0, err
 	}
 	total += n
 	log.Printf("written to replication stream, l=%d", n)
-	n, err = c.Write(data)
+	n, err = c.conn.Write(data)
 	if err != nil {
 		return 0, err
 	}
@@ -90,9 +94,17 @@ func (c *Client) SendBinary(ctx context.Context, data []byte) (int, error) {
 
 func (c *Client) SendForget(ctx context.Context, cmd resp.Command) (int, error) {
 	arr := cmd.Array()
-	n, err := arr.WriteTo(c)
+	n, err := arr.WriteTo(c.conn)
 	if err != nil {
 		return 0, err
 	}
 	return int(n), nil
+}
+
+func (c *Client) RemoteAddr() string {
+	return c.conn.RemoteAddr().String()
+}
+
+func (c *Client) Conn() net.Conn {
+	return c.conn
 }

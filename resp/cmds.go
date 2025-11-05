@@ -7,6 +7,7 @@ import (
 type Command struct {
 	Cmd  string
 	Args []any
+	Size int // Number of bytes read from the stream for this command
 }
 
 func NewCommand(arr Array) (Command, error) {

@@ -47,7 +47,7 @@ func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl
 
 func (h *handlers) init() {
 	h.hmap = map[string]handlerEntry{
-		"ping":     {h.handlePing, false},
+		"ping":     {h.handlePing, true},
 		"echo":     {h.handleEcho, false},
 		"select":   {h.handleSelect, false},
 		"set":      {h.handleSet, true},
@@ -808,10 +808,12 @@ func (h *handlers) handleInfo(cmd *gedis_types.Command) error {
 
 func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 	defer cmd.SetDone()
+
 	if h.checkInTx(cmd) {
 		return nil
 	}
 	args := cmd.Cmd.Args
+
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
@@ -824,6 +826,10 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 
 	switch strings.ToLower(subcmd) {
 	case "listening-port":
+		if h.isSlave {
+			return fmt.Errorf("%w: REPLCONF only valid on a master", ErrInvalidArguments)
+		}
+
 		portnum, err := parseInt(args[1])
 		if err != nil {
 			return fmt.Errorf("%w: invalid port number: %w", ErrInvalidArguments, err)
@@ -832,7 +838,37 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 		if err != nil {
 			return err
 		}
+		cmd.WriteAny("OK")
+	case "getack":
+		if !cmd.IsRepl() {
+			return fmt.Errorf("%w: REPLCONF only valid for replication connections", ErrInvalidArguments)
+		}
+
+		arg := args[1]
+		ackOffset := 0
+
+		argstr, err := parseBulkStr(arg)
+		if err != nil {
+			return fmt.Errorf("%w: invalid ACK offset: %w", ErrInvalidArguments, err)
+		}
+
+		if argstr != "*" {
+			argnum, err := parseInt(arg)
+			if err != nil {
+				return fmt.Errorf("%w: invalid ACK offset: %w", ErrInvalidArguments, err)
+			}
+			ackOffset = argnum
+		}
+
+		_ = ackOffset
+
+		res := resp.Command{Cmd: "REPLCONF", Args: []any{"ACK", h.slave.ReplOffset()}}
+		cmd.WriteAny(res.Array())
 	case "capa":
+		if h.isSlave {
+			return fmt.Errorf("%w: REPLCONF only valid on a master", ErrInvalidArguments)
+		}
+
 		proto, err := parseStr(args[1])
 		if err != nil {
 			return fmt.Errorf("%w: invalid capability: %w", ErrInvalidArguments, err)
@@ -841,10 +877,10 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 		if !exists {
 			return fmt.Errorf("%w: slave not registered yet", ErrInvalidArguments)
 		}
+		cmd.WriteAny("OK")
 	default:
 		return fmt.Errorf("%w: unknown REPLCONF subcommand '%s'", ErrInvalidArguments, subcmd)
 	}
-	cmd.WriteAny("OK")
 	return nil
 }
 

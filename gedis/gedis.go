@@ -109,6 +109,7 @@ func (i *Instance) loop(ctx context.Context) {
 		for _, cmd := range replCmds {
 			log.Printf("repl command received, type '%s', addr=%s", cmd.Cmd.Cmd, cmd.Addr)
 			i.processCmd(ctx, cmd)
+			i.slave.IncrOffset(cmd.Cmd.Size)
 		}
 	}
 

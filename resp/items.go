@@ -1,7 +1,7 @@
 package resp
 
 import (
-	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"math/big"
@@ -122,23 +122,23 @@ func (s Set) WriteTo(w io.Writer) (n int64, err error) {
 }
 
 func (e *Err) WriteTo(w io.Writer) (n int64, err error) {
-	bs := bufio.NewWriter(w)
-	ec, err := bs.WriteString("-ERR ")
+	var buf bytes.Buffer
+	ec, err := buf.WriteString("-ERR ")
 	if err != nil {
 		return n, err
 	}
 	n += int64(ec)
-	vc, err := bs.WriteString(e.Value)
+	vc, err := buf.WriteString(e.Value)
 	if err != nil {
 		return n, err
 	}
 	n += int64(vc)
-	elc, err := bs.WriteString("\r\n")
+	elc, err := buf.WriteString("\r\n")
 	if err != nil {
 		return n, err
 	}
 	n += int64(elc)
-	return n, bs.Flush()
+	return buf.WriteTo(w)
 }
 
 func (e *BulkStr) WriteTo(w io.Writer) (n int64, err error) {

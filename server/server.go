@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -129,6 +130,8 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 		s.info.GetClients().IncrConnectedClients()
 		defer s.info.GetClients().DecrConnectedClients()
 
+		bufRead := bufio.NewReader(conn)
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -137,7 +140,7 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 			}
 
 			conn.SetDeadline(time.Now().Add(time.Hour))
-			cmd, err := resp.ParseCmd(conn)
+			cmd, err := resp.ParseCmd(bufRead)
 			brk, cont := s.handleProtoError(err, conn)
 			if !brk {
 				cancel()

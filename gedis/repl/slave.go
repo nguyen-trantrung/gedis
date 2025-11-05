@@ -3,6 +3,7 @@ package repl
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"strconv"
 	"strings"
@@ -48,6 +49,7 @@ type Slave struct {
 	myPort     int
 	changesBuf *data.CircularBuffer[resp.Command]
 	connState  *gedis_types.ConnState
+	replOffset int
 }
 
 func NewSlave(masterUrl string, myPort int) (*Slave, error) {
@@ -60,11 +62,12 @@ func NewSlave(masterUrl string, myPort int) (*Slave, error) {
 			DbNumber:      0,
 			Conn:          nil,
 		},
+		replOffset: 0,
 	}
 	if err := slave.init(masterUrl); err != nil {
 		return nil, err
 	}
-	slave.connState.Conn = slave.client
+	slave.connState.Conn = slave.client.Conn()
 	return slave, nil
 }
 
@@ -153,8 +156,14 @@ func (s *Slave) readSyncs(ctx context.Context) error {
 		default:
 			cmd, err := resp.ParseCmd(s.client)
 			if err != nil {
-				return fmt.Errorf("failed to read sync from master: %w", err)
+				if err == io.EOF {
+					log.Printf("master closed connection, stopping")
+					return nil
+				}
+				log.Printf("failed to read sync from master: %s", err)
+				continue
 			}
+			log.Printf("received sync command from master: %s, repl_offset=%d", cmd.Cmd, s.ReplOffset())
 			s.changesBuf.Send(ctx, cmd)
 		}
 	}
@@ -169,4 +178,12 @@ func (s *Slave) GetChanges(n int) []*gedis_types.Command {
 		cmds = append(cmds, rCmd)
 	}
 	return cmds
+}
+
+func (s *Slave) IncrOffset(n int) {
+	s.replOffset += n
+}
+
+func (s *Slave) ReplOffset() int {
+	return s.replOffset
 }

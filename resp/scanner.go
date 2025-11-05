@@ -17,7 +17,8 @@ const (
 )
 
 type scanner struct {
-	str io.Reader
+	str       io.Reader
+	bytesRead int
 }
 
 type line struct {
@@ -32,7 +33,8 @@ func Scan(str io.Reader) ([]Token, error) {
 
 func tokens(str io.Reader) ([]Token, error) {
 	sc := scanner{
-		str: str,
+		str:       str,
+		bytesRead: 0,
 	}
 	return sc.scanLines()
 }
@@ -64,10 +66,11 @@ func (s *scanner) nextLine() (*line, error) {
 	}
 	sb := make([]byte, 1)
 	for {
-		_, err := s.str.Read(sb)
+		n, err := s.str.Read(sb)
 		if err != nil {
 			return nil, err
 		}
+		s.bytesRead += n
 		line.l = append(line.l, sb[0])
 		if len(line.l) >= _512MB {
 			return nil, ErrTooManyBytes
@@ -79,6 +82,14 @@ func (s *scanner) nextLine() (*line, error) {
 		}
 	}
 	return line, nil
+}
+
+func (s *scanner) getBytesRead() int {
+	return s.bytesRead
+}
+
+func (s *scanner) resetBytesRead() {
+	s.bytesRead = 0
 }
 
 func (s *line) scanToken() (Token, error) {
