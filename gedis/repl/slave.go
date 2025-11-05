@@ -120,19 +120,19 @@ func (s *Slave) Handshake(ctx context.Context) error {
 
 func (s *Slave) ping(ctx context.Context) error {
 	cmd := resp.Command{Cmd: "PING", Args: nil}
-	_, err := s.client.SendSync(ctx, cmd)
+	_, _, err := s.client.SendSync(ctx, cmd)
 	return err
 }
 
 func (s *Slave) replConf(ctx context.Context, args []any) error {
 	cmd := resp.Command{Cmd: "REPLCONF", Args: args}
-	_, err := s.client.SendSync(ctx, cmd)
+	_, _, err := s.client.SendSync(ctx, cmd)
 	return err
 }
 
 func (s *Slave) psync(ctx context.Context, args []any) error {
 	cmd := resp.Command{Cmd: "PSYNC", Args: args}
-	_, err := s.client.SendSync(ctx, cmd)
+	_, _, err := s.client.SendSync(ctx, cmd)
 	return err
 }
 

@@ -160,7 +160,7 @@ func (m *Master) InitialRdbSync(addr string) error {
 		return fmt.Errorf("failed to decode RDB data: %w", err)
 	}
 
-	err = sd.client.SendBinary(context.TODO(), bdata)
+	_,err = sd.client.SendBinary(context.TODO(), bdata)
 	if err != nil {
 		return fmt.Errorf("failed to sync RDB to slave: %w", err)
 	}
@@ -181,7 +181,7 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 			log.Printf("slave is syncing, skipping repl, addr=%s", sd.client.RemoteAddr())
 			continue
 		}
-		if err := m.selectDb(sd, db); err != nil {
+		if err := m.selectDb(ctx, sd, db); err != nil {
 			var op *net.OpError
 			if errors.As(err, &op) {
 				if strings.Contains(op.Error(), "closed") {
@@ -192,10 +192,11 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 			}
 			return err
 		}
-		err := sd.client.SendForget(ctx, cmd)
+		n, err := sd.client.SendForget(ctx, cmd)
 		if err != nil {
 			return fmt.Errorf("failed to send command to slave: %w", err)
 		}
+		m.addOffset(n)
 	}
 
 	if len(remv) > 0 {
@@ -208,7 +209,7 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 	return nil
 }
 
-func (m *Master) selectDb(sd *slaveData, db int) error {
+func (m *Master) selectDb(ctx context.Context, sd *slaveData, db int) error {
 	if sd.currDb == db {
 		return nil
 	}
@@ -217,10 +218,16 @@ func (m *Master) selectDb(sd *slaveData, db int) error {
 	if err != nil {
 		return fmt.Errorf("failed to create SELECT command: %w", err)
 	}
-	err = sd.client.SendForget(context.TODO(), selectCmd)
+	n, err := sd.client.SendForget(context.TODO(), selectCmd)
 	if err != nil {
 		return fmt.Errorf("failed to select db %d on slave: %w", db, err)
 	}
 	sd.currDb = db
+	m.buf.Send(ctx, selectCmd)
+	m.addOffset(n)
 	return nil
+}
+
+func (m *Master) addOffset(n int) {
+	m.replOffset += int64(n)
 }

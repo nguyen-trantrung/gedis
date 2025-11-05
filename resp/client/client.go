@@ -51,41 +51,48 @@ func (c *Client) Close() error {
 	return nil
 }
 
-func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, error) {
+func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, error) {
 	arr := cmd.Array()
-	if _, err := arr.WriteTo(c); err != nil {
-		return nil, err
+	total := 0
+	if n, err := arr.WriteTo(c); err != nil {
+		return nil, 0, err
+	} else {
+		total += int(n)
 	}
 	out, err := resp.ParseValue(c)
 	if err != nil {
-		return nil, fmt.Errorf("invalid output: %w", err)
+		return nil, 0, fmt.Errorf("invalid output: %w", err)
 	}
 	valerr, ok := out.(resp.Err)
 	if ok {
-		return nil, fmt.Errorf("command error: %s", valerr.Value)
+		return nil, 0, fmt.Errorf("command error: %s", valerr.Value)
 	}
-	return out, nil
+	return out, 0, nil
 }
 
-func (c *Client) SendBinary(ctx context.Context, data []byte) error {
+func (c *Client) SendBinary(ctx context.Context, data []byte) (int, error) {
 	proto := fmt.Sprintf("$%d\r\n", len(data))
+	total := 0
 	n, err := c.Write([]byte(proto))
 	if err != nil {
-		return err
+		return 0, err
 	}
+	total += n
 	log.Printf("written to replication stream, l=%d", n)
 	n, err = c.Write(data)
 	if err != nil {
-		return err
+		return 0, err
 	}
+	total += n
 	log.Printf("written to replication stream, l=%d", n)
-	return nil
+	return total, nil
 }
 
-func (c *Client) SendForget(ctx context.Context, cmd resp.Command) error {
+func (c *Client) SendForget(ctx context.Context, cmd resp.Command) (int, error) {
 	arr := cmd.Array()
-	if _, err := arr.WriteTo(c); err != nil {
-		return err
+	n, err := arr.WriteTo(c)
+	if err != nil {
+		return 0, err
 	}
-	return nil
+	return int(n), nil
 }
