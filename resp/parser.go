@@ -46,22 +46,6 @@ type parser struct {
 	*streamIter
 }
 
-func (p *parser) parseCmds() ([]Command, error) {
-	cmds := make([]Command, 0)
-	for {
-		cmd, err := p.parseCmd()
-		if err != nil {
-			if errors.Is(err, ErrInvalidToken) || errors.Is(err, ErrProtocolError) {
-				return nil, err
-			} else {
-				break
-			}
-		}
-		cmds = append(cmds, cmd)
-	}
-	return cmds, nil
-}
-
 func (p *parser) parseCmd() (Command, error) {
 	curr, err := p.peek()
 	if err != nil {
@@ -402,17 +386,4 @@ func (p *streamIter) peek() (Token, error) {
 	p.lastToken = new(Token)
 	*p.lastToken = tok
 	return tok, nil
-}
-
-func (p *streamIter) readBytes(n int) ([]byte, error) {
-	buf := make([]byte, n)
-	totalRead := 0
-	for totalRead < n {
-		readNow, err := p.sc.str.Read(buf[totalRead:])
-		if err != nil {
-			return nil, err
-		}
-		totalRead += readNow
-	}
-	return buf, nil
 }

@@ -160,7 +160,7 @@ func (m *Master) InitialRdbSync(addr string) error {
 		return fmt.Errorf("failed to decode RDB data: %w", err)
 	}
 
-	_,err = sd.client.SendBinary(context.TODO(), bdata)
+	_, err = sd.client.SendBinary(context.TODO(), bdata)
 	if err != nil {
 		return fmt.Errorf("failed to sync RDB to slave: %w", err)
 	}
@@ -176,25 +176,35 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 
 	remv := make([]string, 0, len(m.slaves))
 
+	isDisconnected := func(err error, sk string, sd *slaveData) bool {
+		var op *net.OpError
+		if errors.As(err, &op) {
+			if strings.Contains(op.Error(), "closed") {
+				log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
+				remv = append(remv, sk)
+				return true
+			}
+		}
+		return false
+	}
+
 	for sk, sd := range m.slaves {
 		if sd.isSyncing {
 			log.Printf("slave is syncing, skipping repl, addr=%s", sd.client.RemoteAddr())
 			continue
 		}
-		if err := m.selectDb(ctx, sd, db); err != nil {
-			var op *net.OpError
-			if errors.As(err, &op) {
-				if strings.Contains(op.Error(), "closed") {
-					log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
-					remv = append(remv, sk)
-					continue
-				}
-			}
-			return err
-		}
+		// if err := m.selectDb(ctx, sd, db); err != nil {
+		// 	if isDisconnected(err, sk, sd) {
+		// 		continue
+		// 	}
+		// 	return fmt.Errorf("failed to select db on slave, addr=%s: %w", sd.client.RemoteAddr(), err)
+		// }
 		n, err := sd.client.SendForget(ctx, cmd)
 		if err != nil {
-			return fmt.Errorf("failed to send command to slave: %w", err)
+			if isDisconnected(err, sk, sd) {
+				continue
+			}
+			return fmt.Errorf("failed to send repl command to slave, addr=%s: %w", sd.client.RemoteAddr(), err)
 		}
 		m.addOffset(n)
 	}

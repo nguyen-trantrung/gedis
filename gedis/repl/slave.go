@@ -7,6 +7,8 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ttn-nguyen42/gedis/data"
 	gedis_types "github.com/ttn-nguyen42/gedis/gedis/types"
@@ -43,19 +45,25 @@ func newHostPort(url string) (*hostPort, error) {
 	return hp, nil
 }
 
+type slaveState struct {
+	mu      sync.Mutex
+	pending []*gedis_types.Command
+}
+
 type Slave struct {
 	master     *hostPort
 	client     *resp_client.Client
 	myPort     int
-	changesBuf *data.CircularBuffer[resp.Command]
+	changesBuf *data.CircularBuffer[*gedis_types.Command]
 	connState  *gedis_types.ConnState
 	replOffset int
+	state      *slaveState
 }
 
 func NewSlave(masterUrl string, myPort int) (*Slave, error) {
 	slave := &Slave{
 		myPort:     myPort,
-		changesBuf: data.NewCircularBuffer[resp.Command](1024),
+		changesBuf: data.NewCircularBuffer[*gedis_types.Command](1024),
 		connState: &gedis_types.ConnState{
 			InTransaction: false,
 			Tx:            nil,
@@ -63,6 +71,9 @@ func NewSlave(masterUrl string, myPort int) (*Slave, error) {
 			Conn:          nil,
 		},
 		replOffset: 0,
+		state: &slaveState{
+			pending: make([]*gedis_types.Command, 0),
+		},
 	}
 	if err := slave.init(masterUrl); err != nil {
 		return nil, err
@@ -117,7 +128,7 @@ func (s *Slave) Handshake(ctx context.Context) error {
 		return fmt.Errorf("read initial RDB err: %w", err)
 	}
 	log.Printf("handshake read initial RDB success")
-	go s.readSyncs(ctx)
+	s.beginHandleSyncs(ctx)
 	return nil
 }
 
@@ -148,36 +159,93 @@ func (s *Slave) readInitRdb() error {
 	return nil
 }
 
-func (s *Slave) readSyncs(ctx context.Context) error {
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
+func (s *Slave) beginHandleSyncs(baseCtx context.Context) error {
+	log.Printf("beginning to handle sync commands from master")
+	ctx, cancel := context.WithCancel(baseCtx)
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	go func() {
+		<-ctx.Done()
+		wg.Wait()
+		s.client.Close()
+	}()
+
+	go func() {
+		defer wg.Done()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
 			cmd, err := resp.ParseCmd(s.client)
 			if err != nil {
 				if err == io.EOF {
 					log.Printf("master closed connection, stopping")
-					return nil
+				} else {
+					log.Printf("failed to read sync from master: %s", err)
 				}
-				log.Printf("failed to read sync from master: %s", err)
-				continue
+				cancel()
+				return
 			}
-			log.Printf("received sync command from master: %s, repl_offset=%d", cmd.Cmd, s.ReplOffset())
-			s.changesBuf.Send(ctx, cmd)
+
+			log.Printf("received sync command from master: %s, size=%d, repl_offset=%d", cmd.Cmd, cmd.Size, s.ReplOffset())
+
+			replCmd := gedis_types.NewReplCommand(cmd, s.connState, s.master.String())
+
+			s.state.mu.Lock()
+			s.state.pending = append(s.state.pending, replCmd)
+			s.state.mu.Unlock()
+
+			s.changesBuf.Send(ctx, replCmd)
+
+			s.IncrOffset(cmd.Size)
 		}
-	}
+	}()
+
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			s.state.mu.Lock()
+			if len(s.state.pending) > 0 {
+				cmd := s.state.pending[0]
+
+				if cmd.IsDone() || cmd.HasTimedOut() {
+					if cmd.Len() >= 0 {
+						resp, err := cmd.WriteTo(s.connState.Conn)
+						if err != nil {
+							log.Printf("resp back to master err to TCP, err=%s, addr=%s", err, s.connState.Conn.RemoteAddr())
+						} else {
+							log.Printf("written back to replication TCP stream, addr=%s n=%d", s.connState.Conn.RemoteAddr(), resp)
+						}
+					}
+					if cmd.Defer != nil {
+						cmd.Defer()
+					}
+					s.state.pending = s.state.pending[1:]
+				}
+			}
+			s.state.mu.Unlock()
+
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+
+	return nil
 }
 
 func (s *Slave) GetChanges(n int) []*gedis_types.Command {
-	cmds := make([]*gedis_types.Command, 0, n)
-	rcmds := s.changesBuf.ReadBatch(n)
-
-	for _, cmd := range rcmds {
-		rCmd := gedis_types.NewReplCommand(cmd, s.connState, s.master.String())
-		cmds = append(cmds, rCmd)
-	}
-	return cmds
+	return s.changesBuf.ReadBatch(n)
 }
 
 func (s *Slave) IncrOffset(n int) {

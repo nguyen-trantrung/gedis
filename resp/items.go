@@ -45,22 +45,24 @@ func NewErr(err error) Err {
 	return Err{Size: len(msg), Value: msg}
 }
 
-func (a Array) WriteTo(w io.Writer) (n int64, err error) {
+func (a Array) WriteTo(w io.Writer) (int64, error) {
 	header := fmt.Sprintf("*%d\r\n", a.Size)
-	if _, err := w.Write([]byte(header)); err != nil {
-		return n, err
+	total := int64(0)
+	n, err := w.Write([]byte(header))
+	if err != nil {
+		return 0, err
 	}
+	total += int64(n)
 	if a.Size > 0 {
-		n += int64(len(header))
 		for _, item := range a.Items {
 			nn, err := WriteAnyTo(item, w)
-			n += nn
+			total += nn
 			if err != nil {
-				return n, err
+				return total, err
 			}
 		}
 	}
-	return n, nil
+	return total, nil
 }
 
 func (m Map) WriteTo(w io.Writer) (n int64, err error) {

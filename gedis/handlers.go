@@ -47,7 +47,7 @@ func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl
 
 func (h *handlers) init() {
 	h.hmap = map[string]handlerEntry{
-		"ping":     {h.handlePing, true},
+		"ping":     {h.handlePing, false},
 		"echo":     {h.handleEcho, false},
 		"select":   {h.handleSelect, false},
 		"set":      {h.handleSet, true},
@@ -133,7 +133,9 @@ func (h *handlers) handlePing(cmd *gedis_types.Command) error {
 	if h.checkInTx(cmd) {
 		return nil
 	}
-	cmd.WriteAny("PONG")
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny("PONG")
+	}
 	return nil
 }
 
@@ -862,7 +864,7 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 
 		_ = ackOffset
 
-		res := resp.Command{Cmd: "REPLCONF", Args: []any{"ACK", h.slave.ReplOffset()}}
+		res := resp.Command{Cmd: "REPLCONF", Args: []any{"ACK", fmt.Sprintf("%d", 0)}}
 		cmd.WriteAny(res.Array())
 	case "capa":
 		if h.isSlave {
@@ -893,7 +895,7 @@ func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
 	if h.isSlave {
 		return fmt.Errorf("PSYNC invalid for slave")
 	}
-	str := fmt.Sprintf("FULLRESYNC %s %d", h.master.ReplId(), h.master.ReplOffset())
+	str := fmt.Sprintf("FULLRESYNC %s %d", h.master.ReplId(), 0) //TODO
 	sarr := resp.BulkStr{Size: len(str), Value: str}
 	cmd.WriteAny(sarr)
 
