@@ -172,8 +172,12 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 	defer m.syncInfo()
 
 	for _, sd := range m.slaves {
-		if err := m.selectDb(sd, db); err != nil {
-			return err
+		// if err := m.selectDb(sd, db); err != nil {
+		// 	return err
+		// }
+		err := sd.client.SendForget(ctx, cmd)
+		if err != nil {
+			return fmt.Errorf("failed to send command to slave: %w", err)
 		}
 	}
 

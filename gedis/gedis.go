@@ -98,7 +98,7 @@ func (i *Instance) Run(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (i *Instance) loop(_ context.Context) {
+func (i *Instance) loop(ctx context.Context) {
 	dbi := i.dbs[i.round%len(i.dbs)]
 	if dbi != nil {
 		dbi.EvictHashMap()
@@ -108,15 +108,16 @@ func (i *Instance) loop(_ context.Context) {
 		replCmds := i.slave.GetChanges(10)
 		for _, cmd := range replCmds {
 			log.Printf("repl command received, type '%s', addr=%s", cmd.Cmd.Cmd, cmd.Addr)
-			i.processCmd(cmd)
+			i.processCmd(ctx, cmd)
 		}
 	}
 
 	cmds := i.cmdBuf.ReadBatch(10)
 	for _, cmd := range cmds {
 		log.Printf("command received, type '%s', addr=%s", cmd.Cmd.Cmd, cmd.Addr)
-		i.processCmd(cmd)
+		i.processCmd(ctx, cmd)
 	}
+
 	if len(cmds) == 0 {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -134,13 +135,13 @@ func (i *Instance) initDb(idx int) error {
 	return nil
 }
 
-func (i *Instance) processCmd(cmd *gedis_types.Command) {
+func (i *Instance) processCmd(ctx context.Context, cmd *gedis_types.Command) {
 	dbn := cmd.Db()
 	i.initDb(dbn)
 
 	handlers := i.handlers[dbn]
 
-	hdl, err := handlers.route(cmd)
+	hdl, shouldReplicate, err := handlers.route(cmd)
 	if err != nil {
 		cmd.WriteAny(err)
 		cmd.SetDone()
@@ -150,7 +151,16 @@ func (i *Instance) processCmd(cmd *gedis_types.Command) {
 	if err := hdl(cmd); err != nil {
 		cmd.WriteAny(err)
 		cmd.SetDone()
+	}
+
+	if !shouldReplicate {
 		return
+	}
+
+	if i.isMaster() {
+		if err := i.master.Repl(ctx, dbn, cmd.Cmd); err != nil {
+			log.Printf("failed to replicate command to slaves: %v", err)
+		}
 	}
 }
 

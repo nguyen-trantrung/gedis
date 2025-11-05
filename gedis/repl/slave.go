@@ -57,7 +57,7 @@ func NewSlave(masterUrl string, myPort int) (*Slave, error) {
 		connState: &gedis_types.ConnState{
 			InTransaction: false,
 			Tx:            nil,
-			DbNumber:      -1,
+			DbNumber:      0,
 			Conn:          nil,
 		},
 	}

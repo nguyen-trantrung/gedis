@@ -23,6 +23,13 @@ func NewCircularBuffer[D any](cap int) *CircularBuffer[D] {
 	}
 }
 
+func (c *CircularBuffer[D]) Size() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.size
+}
+
 func (c *CircularBuffer[D]) Send(ctx context.Context, cmd D) {
 	c.send(ctx, []D{cmd})
 }

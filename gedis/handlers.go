@@ -18,13 +18,18 @@ var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
 
 type handler func(cmd *gedis_types.Command) error
 
+type handlerEntry struct {
+	handler         handler
+	shouldReplicate bool
+}
+
 type handlers struct {
 	isSlave bool
 	master  *repl.Master
 	slave   *repl.Slave
 	db      *database
 	info    *info.Info
-	hmap    map[string]handler
+	hmap    map[string]handlerEntry
 }
 
 func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl.Slave) *handlers {
@@ -41,27 +46,27 @@ func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl
 }
 
 func (h *handlers) init() {
-	h.hmap = map[string]handler{
-		"ping":     h.handlePing,
-		"echo":     h.handleEcho,
-		"select":   h.handleSelect,
-		"set":      h.handleSet,
-		"get":      h.handleGet,
-		"rpush":    h.handleRPush,
-		"lpush":    h.handleLPush,
-		"lpop":     h.handleLPop,
-		"rpop":     h.handleRPop,
-		"lrange":   h.handleLRange,
-		"llen":     h.handleLLen,
-		"lindex":   h.handleLIndex,
-		"blpop":    h.handleBlockLpop,
-		"incr":     h.handleIncr,
-		"multi":    h.handleMulti,
-		"exec":     h.handleExec,
-		"discard":  h.handleDiscard,
-		"info":     h.handleInfo,
-		"replconf": h.handleReplConf,
-		"psync":    h.handlePsync,
+	h.hmap = map[string]handlerEntry{
+		"ping":     {h.handlePing, false},
+		"echo":     {h.handleEcho, false},
+		"select":   {h.handleSelect, false},
+		"set":      {h.handleSet, true},
+		"get":      {h.handleGet, false},
+		"rpush":    {h.handleRPush, true},
+		"lpush":    {h.handleLPush, true},
+		"lpop":     {h.handleLPop, true},
+		"rpop":     {h.handleRPop, true},
+		"lrange":   {h.handleLRange, false},
+		"llen":     {h.handleLLen, false},
+		"lindex":   {h.handleLIndex, false},
+		"blpop":    {h.handleBlockLpop, false},
+		"incr":     {h.handleIncr, true},
+		"multi":    {h.handleMulti, true},
+		"exec":     {h.handleExec, true},
+		"discard":  {h.handleDiscard, true},
+		"info":     {h.handleInfo, false},
+		"replconf": {h.handleReplConf, false},
+		"psync":    {h.handlePsync, false},
 	}
 }
 
@@ -114,13 +119,13 @@ func parseFloat(arg any) (float64, error) {
 	return val, nil
 }
 
-func (h *handlers) route(cmd *gedis_types.Command) (handler, error) {
+func (h *handlers) route(cmd *gedis_types.Command) (handler, bool, error) {
 	r := cmd.Cmd
-	hdlr, found := h.hmap[strings.ToLower(r.Cmd)]
+	entry, found := h.hmap[strings.ToLower(r.Cmd)]
 	if !found {
-		return nil, fmt.Errorf("%w: invalid command '%s'", resp.ErrProtocolError, r.Cmd)
+		return nil, false, fmt.Errorf("%w: invalid command '%s'", resp.ErrProtocolError, r.Cmd)
 	}
-	return hdlr, nil
+	return entry.handler, entry.shouldReplicate, nil
 }
 
 func (h *handlers) handlePing(cmd *gedis_types.Command) error {
@@ -703,7 +708,7 @@ func (h *handlers) handleExec(cmd *gedis_types.Command) error {
 	state.InTransaction = false
 
 	for _, op := range state.Tx {
-		hdl, err := h.route(op)
+		hdl, _, err := h.route(op)
 		if err != nil {
 			return err
 		}
