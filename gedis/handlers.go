@@ -10,12 +10,13 @@ import (
 
 	"github.com/ttn-nguyen42/gedis/gedis/info"
 	"github.com/ttn-nguyen42/gedis/gedis/repl"
+	gedis_types "github.com/ttn-nguyen42/gedis/gedis/types"
 	"github.com/ttn-nguyen42/gedis/resp"
 )
 
 var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
 
-type handler func(conn *ConnState, cmd *Command) error
+type handler func(cmd *gedis_types.Command) error
 
 type handlers struct {
 	isSlave bool
@@ -72,6 +73,17 @@ func parseBulkStr(arg any) (string, error) {
 	return bulkStr.Value, nil
 }
 
+func parseStr(arg any) (string, error) {
+	switch v := arg.(type) {
+	case string:
+		return v, nil
+	case resp.BulkStr:
+		return v.Value, nil
+	default:
+		return "", fmt.Errorf("%w: expected string or bulk string, got %T", ErrInvalidArguments, arg)
+	}
+}
+
 func parseInt(arg any) (int, error) {
 	var str string
 	bulkStr, ok := arg.(resp.BulkStr)
@@ -102,7 +114,7 @@ func parseFloat(arg any) (float64, error) {
 	return val, nil
 }
 
-func (h *handlers) route(cmd *Command) (handler, error) {
+func (h *handlers) route(cmd *gedis_types.Command) (handler, error) {
 	r := cmd.Cmd
 	hdlr, found := h.hmap[strings.ToLower(r.Cmd)]
 	if !found {
@@ -111,18 +123,18 @@ func (h *handlers) route(cmd *Command) (handler, error) {
 	return hdlr, nil
 }
 
-func (h *handlers) handlePing(conn *ConnState, cmd *Command) error {
+func (h *handlers) handlePing(cmd *gedis_types.Command) error {
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 	cmd.WriteAny("PONG")
 	return nil
 }
 
-func (h *handlers) handleEcho(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleEcho(cmd *gedis_types.Command) error {
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 	for _, arg := range cmd.Cmd.Args {
@@ -131,7 +143,7 @@ func (h *handlers) handleEcho(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handleSelect(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleSelect(cmd *gedis_types.Command) error {
 	if len(cmd.Cmd.Args) < 1 {
 		return fmt.Errorf("%w: missing database number", ErrInvalidArguments)
 	}
@@ -140,7 +152,7 @@ func (h *handlers) handleSelect(conn *ConnState, cmd *Command) error {
 		return err
 	}
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 	cmd.SelectDb(dbn)
@@ -179,11 +191,16 @@ func checkExpiry(args []any) (int, bool, error) {
 	return ttl * mod, true, nil
 }
 
-func (h *handlers) handleSet(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleSet(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
@@ -194,21 +211,24 @@ func (h *handlers) handleSet(conn *ConnState, cmd *Command) error {
 		return err
 	}
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
+
 	h.db.HashMap().Set(key, value, ttl)
-	cmd.WriteAny("OK")
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny("OK")
+	}
 	return nil
 }
 
-func (h *handlers) handleGet(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleGet(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
@@ -224,15 +244,21 @@ func (h *handlers) handleGet(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handleRPush(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleRPush(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
+
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
@@ -241,14 +267,17 @@ func (h *handlers) handleRPush(conn *ConnState, cmd *Command) error {
 	for _, value := range args[1:] {
 		list.RightPush(value)
 	}
-	cmd.WriteAny(list.Len())
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(list.Len())
+	}
 
 	blkRequests, ok := h.db.block.blockLpop[key]
 	if !ok {
 		return nil
 	}
 
-	h.db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *Command) bool {
+	h.db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *gedis_types.Command) bool {
 		ok := h.resolveBlockLpop(key, req)
 		if ok {
 			log.Printf("resolved blpop request, listKey=%s", key)
@@ -258,15 +287,21 @@ func (h *handlers) handleRPush(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handleLPush(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleLPush(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
+
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
@@ -275,14 +310,17 @@ func (h *handlers) handleLPush(conn *ConnState, cmd *Command) error {
 	for _, value := range args[1:] {
 		list.LeftPush(value)
 	}
-	cmd.WriteAny(list.Len())
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(list.Len())
+	}
 
 	blkRequests, ok := h.db.block.blockLpop[key]
 	if !ok {
 		return nil
 	}
 
-	h.db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *Command) bool {
+	h.db.block.blockLpop[key] = slices.DeleteFunc(blkRequests, func(req *gedis_types.Command) bool {
 		ok := h.resolveBlockLpop(key, req)
 		if ok {
 			log.Printf("resolved blpop request, listKey=%s", key)
@@ -292,15 +330,21 @@ func (h *handlers) handleLPush(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handleLPop(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleLPop(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
+
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
@@ -317,7 +361,9 @@ func (h *handlers) handleLPop(conn *ConnState, cmd *Command) error {
 
 	list, exists := h.db.GetList(key)
 	if !exists {
-		cmd.WriteAny(resp.BulkStr{Size: -1})
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(resp.BulkStr{Size: -1})
+		}
 		return nil
 	}
 
@@ -333,31 +379,43 @@ func (h *handlers) handleLPop(conn *ConnState, cmd *Command) error {
 		if list.Len() == 0 {
 			h.db.DeleteList(key)
 		}
-		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+		}
 		return nil
 	}
 
 	value, ok := list.LeftPop()
 	if !ok {
-		cmd.WriteAny(resp.BulkStr{Size: -1})
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(resp.BulkStr{Size: -1})
+		}
 		return nil
 	}
 	if list.Len() == 0 {
 		h.db.DeleteList(key)
 	}
-	cmd.WriteAny(value)
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(value)
+	}
 	return nil
 }
 
-func (h *handlers) handleRPop(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleRPop(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
+
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
@@ -374,7 +432,9 @@ func (h *handlers) handleRPop(conn *ConnState, cmd *Command) error {
 
 	list, exists := h.db.GetList(key)
 	if !exists {
-		cmd.WriteAny(resp.BulkStr{Size: -1})
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(resp.BulkStr{Size: -1})
+		}
 		return nil
 	}
 
@@ -390,29 +450,35 @@ func (h *handlers) handleRPop(conn *ConnState, cmd *Command) error {
 		if list.Len() == 0 {
 			h.db.DeleteList(key)
 		}
-		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+		}
 		return nil
 	}
 
 	value, ok := list.RightPop()
 	if !ok {
-		cmd.WriteAny(resp.BulkStr{Size: -1})
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(resp.BulkStr{Size: -1})
+		}
 		return nil
 	}
 	if list.Len() == 0 {
 		h.db.DeleteList(key)
 	}
-	cmd.WriteAny(value)
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(value)
+	}
 	return nil
 }
 
-func (h *handlers) handleLRange(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleLRange(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 3 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
@@ -441,13 +507,13 @@ func (h *handlers) handleLRange(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handleLLen(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleLLen(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
@@ -463,13 +529,13 @@ func (h *handlers) handleLLen(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handleLIndex(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleLIndex(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 	key, err := parseBulkStr(args[0])
@@ -497,13 +563,13 @@ func (h *handlers) handleLIndex(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handleBlockLpop(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleBlockLpop(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 
@@ -529,7 +595,7 @@ func (h *handlers) handleBlockLpop(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) resolveBlockLpop(key string, cmd *Command) (ok bool) {
+func (h *handlers) resolveBlockLpop(key string, cmd *gedis_types.Command) (ok bool) {
 	if cmd.HasTimedOut() {
 		return true
 	}
@@ -549,26 +615,33 @@ func (h *handlers) resolveBlockLpop(key string, cmd *Command) (ok bool) {
 	return true
 }
 
-func (h *handlers) handleIncr(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleIncr(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) != 1 {
 		log.Println(args)
 		return fmt.Errorf("%w: requires exactly 1 argument", ErrInvalidArguments)
 	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
 	key, err := parseBulkStr(args[0])
 	if err != nil {
 		return err
 	}
 	defer cmd.SetDone()
 
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 
 	val, ok := h.db.hm.Get(key)
 	if !ok {
 		h.db.HashMap().Set(key, resp.BulkStr{Size: 1, Value: "1"}, 0)
-		cmd.WriteAny(1)
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(1)
+		}
 		return nil
 	}
 	switch val.(type) {
@@ -580,7 +653,9 @@ func (h *handlers) handleIncr(conn *ConnState, cmd *Command) error {
 		num += 1
 		numStr := fmt.Sprintf("%d", num)
 		h.db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
-		cmd.WriteAny(num)
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(num)
+		}
 	default:
 		return fmt.Errorf("value is not an integer or out of range")
 	}
@@ -588,73 +663,118 @@ func (h *handlers) handleIncr(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handleMulti(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleMulti(cmd *gedis_types.Command) error {
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	state := cmd.ConnState
+
 	defer cmd.SetDone()
-	if conn.InTransaction {
+	if state.InTransaction {
 		return fmt.Errorf("MULTI calls cannot be nested")
 	}
-	conn.InTransaction = true
-	cmd.WriteAny("OK")
+
+	state.InTransaction = true
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny("OK")
+	}
 	return nil
 }
 
-func (h *handlers) handleExec(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleExec(cmd *gedis_types.Command) error {
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	state := cmd.ConnState
+
 	defer cmd.SetDone()
-	if !conn.InTransaction {
+	if !state.InTransaction {
 		return fmt.Errorf("EXEC without MULTI")
 	}
 	defer func() {
-		conn.Tx = make([]*Command, 0)
+		state.Tx = make([]*gedis_types.Command, 0)
 	}()
 
-	bufs := make([]any, 0, len(conn.Tx))
-	conn.InTransaction = false
+	bufs := make([]any, 0, len(state.Tx))
+	state.InTransaction = false
 
-	for _, op := range conn.Tx {
+	for _, op := range state.Tx {
 		hdl, err := h.route(op)
 		if err != nil {
 			return err
 		}
-		err = hdl(conn, op)
+		err = hdl(op)
 		if err != nil {
 			cmd.SetDone()
 			bufs = append(bufs, err)
 		} else {
-			bufs = append(bufs, op.out)
+			bufs = append(bufs, op.Output())
 		}
 	}
 
-	arr := resp.Array{Size: len(bufs), Items: bufs}
-
-	cmd.WriteAny(arr)
+	if h.shouldWriteOutput(cmd) {
+		arr := resp.Array{Size: len(bufs), Items: bufs}
+		cmd.WriteAny(arr)
+	}
 	return nil
 }
 
-func (h *handlers) checkInTx(conn *ConnState, cmd *Command) bool {
-	if conn.InTransaction {
-		conn.Tx = append(conn.Tx, cmd.Copy())
+func (h *handlers) checkInTx(cmd *gedis_types.Command) bool {
+	state := cmd.ConnState
+	if state.InTransaction {
+		state.Tx = append(state.Tx, cmd.Copy())
 		cmd.WriteAny("QUEUED")
 		return true
 	}
 	return false
 }
 
-func (h *handlers) handleDiscard(conn *ConnState, cmd *Command) error {
-	defer cmd.SetDone()
+func (h *handlers) shouldWriteOutput(cmd *gedis_types.Command) bool {
 
-	if !conn.InTransaction {
-		return fmt.Errorf("DISCARD without MULTI")
+	if h.isSlave {
+		return !cmd.IsRepl()
 	}
-	cmd.WriteAny("OK")
 
-	conn.InTransaction = false
-	conn.Tx = make([]*Command, 0)
+	return true
+}
+
+func (h *handlers) checkSlaveWrite(cmd *gedis_types.Command) error {
+	if h.isSlave && !cmd.IsRepl() {
+		return fmt.Errorf("READONLY You can't write against a read only replica")
+	}
 	return nil
 }
 
-func (h *handlers) handleInfo(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleDiscard(cmd *gedis_types.Command) error {
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+
+	state := cmd.ConnState
+
+	if !state.InTransaction {
+		return fmt.Errorf("DISCARD without MULTI")
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny("OK")
+	}
+
+	state.InTransaction = false
+	state.Tx = make([]*gedis_types.Command, 0)
+	return nil
+}
+
+func (h *handlers) handleInfo(cmd *gedis_types.Command) error {
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
 		return fmt.Errorf("INFO not available during transaction")
 	}
 	args := cmd.Cmd.Args
@@ -681,35 +801,38 @@ func (h *handlers) handleInfo(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handleReplConf(conn *ConnState, cmd *Command) error {
+func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 	defer cmd.SetDone()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return nil
 	}
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
-	subcmd, err := parseBulkStr(args[0])
+	subcmd, err := parseStr(args[0])
 	if err != nil {
 		return err
 	}
+
+	state := cmd.ConnState
+
 	switch strings.ToLower(subcmd) {
 	case "listening-port":
 		portnum, err := parseInt(args[1])
 		if err != nil {
 			return fmt.Errorf("%w: invalid port number: %w", ErrInvalidArguments, err)
 		}
-		err = h.master.AddSlave(conn.Conn, portnum)
+		err = h.master.AddSlave(state.Conn, portnum)
 		if err != nil {
 			return err
 		}
 	case "capa":
-		proto, err := parseBulkStr(args[1])
+		proto, err := parseStr(args[1])
 		if err != nil {
 			return fmt.Errorf("%w: invalid capability: %w", ErrInvalidArguments, err)
 		}
-		exists := h.master.SetSlaveProto(conn.Conn, proto)
+		exists := h.master.SetSlaveProto(state.Conn, proto)
 		if !exists {
 			return fmt.Errorf("%w: slave not registered yet", ErrInvalidArguments)
 		}
@@ -720,12 +843,10 @@ func (h *handlers) handleReplConf(conn *ConnState, cmd *Command) error {
 	return nil
 }
 
-func (h *handlers) handlePsync(conn *ConnState, cmd *Command) error {
-	defer func() {
-		cmd.SetDone()
+func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
+	defer cmd.SetDone()
 
-	}()
-	if h.checkInTx(conn, cmd) {
+	if h.checkInTx(cmd) {
 		return fmt.Errorf("PSYNC cannot be in a transaction")
 	}
 	if h.isSlave {
@@ -735,20 +856,23 @@ func (h *handlers) handlePsync(conn *ConnState, cmd *Command) error {
 	sarr := resp.BulkStr{Size: len(str), Value: str}
 	cmd.WriteAny(sarr)
 
+	state := cmd.ConnState
+
 	cmd.SetDefer(func() {
-		_, found := h.master.GetSlave(conn.Conn.RemoteAddr().String())
+		_, found := h.master.GetSlave(state.Conn.RemoteAddr().String())
 		if found {
-			go h.resolveInitRdbSync(conn)
+			h.resolveInitRdbSync(state)
 		}
 	})
 
 	return nil
 }
 
-func (h *handlers) resolveInitRdbSync(conn *ConnState) {
-	addr := conn.Conn.RemoteAddr().String()
+func (h *handlers) resolveInitRdbSync(state *gedis_types.ConnState) {
+	addr := state.Conn.RemoteAddr().String()
 	err := h.master.InitialRdbSync(addr)
 	if err != nil {
 		log.Printf("rdb sync failed, addr=%s, err=%s", addr, err)
 	}
+	log.Printf("master sync RDB to replica, addr=%s", addr)
 }

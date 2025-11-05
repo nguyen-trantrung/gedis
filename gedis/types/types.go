@@ -1,4 +1,4 @@
-package gedis
+package gedis_types
 
 import (
 	"bytes"
@@ -19,6 +19,7 @@ type Command struct {
 	done           bool
 	timedOut       time.Time
 	defTimedOutOut any
+	isRepl         bool
 }
 
 func NewCommand(cmd resp.Command, state *ConnState, addr string) *Command {
@@ -29,6 +30,19 @@ func NewCommand(cmd resp.Command, state *ConnState, addr string) *Command {
 		done:           false,
 		Defer:          nil,
 		defTimedOutOut: nil,
+		isRepl:         false,
+	}
+}
+
+func NewReplCommand(cmd resp.Command, state *ConnState, addr string) *Command {
+	return &Command{
+		Cmd:            cmd,
+		Addr:           addr,
+		ConnState:      state,
+		done:           false,
+		Defer:          nil,
+		defTimedOutOut: nil,
+		isRepl:         true,
 	}
 }
 
@@ -58,6 +72,10 @@ func (c *Command) SelectDb(dbNum int) {
 
 func (c *Command) SetOutput(data Bytes) {
 	c.out = bytes.NewBuffer(data)
+}
+
+func (c *Command) Output() *bytes.Buffer {
+	return c.out
 }
 
 func (c *Command) SetDefaultTimeoutOutput(data any) {
@@ -136,4 +154,8 @@ func (c *Command) Db() int {
 		return c.ConnState.DbNumber
 	}
 	return 0
+}
+
+func (c *Command) IsRepl() bool {
+	return c.isRepl
 }

@@ -6,13 +6,15 @@ import (
 	"log"
 	"time"
 
+	"github.com/ttn-nguyen42/gedis/data"
 	"github.com/ttn-nguyen42/gedis/gedis/info"
 	"github.com/ttn-nguyen42/gedis/gedis/repl"
+	gedis_types "github.com/ttn-nguyen42/gedis/gedis/types"
 )
 
 type Instance struct {
 	info     *info.Info
-	cmdBuf   *circular[*Command]
+	cmdBuf   *data.CircularBuffer[*gedis_types.Command]
 	stop     chan struct{}
 	dbs      []*database
 	handlers map[int]*handlers
@@ -24,7 +26,7 @@ type Instance struct {
 
 func NewInstance(cap int, opts ...Option) (*Instance, error) {
 	inst := &Instance{
-		cmdBuf:   newBuffer[*Command](cap),
+		cmdBuf:   data.NewCircularBuffer[*gedis_types.Command](cap),
 		stop:     make(chan struct{}, 1),
 		dbs:      make([]*database, 16),
 		handlers: make(map[int]*handlers, 16),
@@ -102,6 +104,14 @@ func (i *Instance) loop(_ context.Context) {
 		dbi.EvictHashMap()
 	}
 
+	if i.isSlave() {
+		replCmds := i.slave.GetChanges(10)
+		for _, cmd := range replCmds {
+			log.Printf("repl command received, type '%s', addr=%s", cmd.Cmd.Cmd, cmd.Addr)
+			i.processCmd(cmd)
+		}
+	}
+
 	cmds := i.cmdBuf.ReadBatch(10)
 	for _, cmd := range cmds {
 		log.Printf("command received, type '%s', addr=%s", cmd.Cmd.Cmd, cmd.Addr)
@@ -124,7 +134,7 @@ func (i *Instance) initDb(idx int) error {
 	return nil
 }
 
-func (i *Instance) processCmd(cmd *Command) {
+func (i *Instance) processCmd(cmd *gedis_types.Command) {
 	dbn := cmd.Db()
 	i.initDb(dbn)
 
@@ -137,7 +147,7 @@ func (i *Instance) processCmd(cmd *Command) {
 		return
 	}
 
-	if err := hdl(cmd.ConnState, cmd); err != nil {
+	if err := hdl(cmd); err != nil {
 		cmd.WriteAny(err)
 		cmd.SetDone()
 		return
@@ -165,7 +175,7 @@ func (i *Instance) startMaster(_ context.Context) error {
 	return nil
 }
 
-func (i *Instance) Submit(ctx context.Context, cmds []*Command) error {
+func (i *Instance) Submit(ctx context.Context, cmds []*gedis_types.Command) error {
 	i.cmdBuf.MultiSend(ctx, cmds)
 	return ctx.Err()
 }

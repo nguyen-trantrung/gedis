@@ -1,11 +1,11 @@
-package gedis
+package data
 
 import (
 	"context"
 	"sync"
 )
 
-type circular[D any] struct {
+type CircularBuffer[D any] struct {
 	data   []D
 	head   int
 	tail   int
@@ -15,23 +15,23 @@ type circular[D any] struct {
 	mu     sync.Mutex
 }
 
-func newBuffer[D any](cap int) *circular[D] {
-	return &circular[D]{
+func NewCircularBuffer[D any](cap int) *CircularBuffer[D] {
+	return &CircularBuffer[D]{
 		data:   make([]D, cap),
 		cap:    cap,
 		signal: make(chan struct{}, 1),
 	}
 }
 
-func (c *circular[D]) Send(ctx context.Context, cmd D) {
+func (c *CircularBuffer[D]) Send(ctx context.Context, cmd D) {
 	c.send(ctx, []D{cmd})
 }
 
-func (c *circular[D]) MultiSend(ctx context.Context, cmds []D) {
+func (c *CircularBuffer[D]) MultiSend(ctx context.Context, cmds []D) {
 	c.send(ctx, cmds)
 }
 
-func (c *circular[D]) send(ctx context.Context, cmds []D) {
+func (c *CircularBuffer[D]) send(ctx context.Context, cmds []D) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -52,11 +52,11 @@ func (c *circular[D]) send(ctx context.Context, cmds []D) {
 	}
 }
 
-func (c *circular[D]) Read() (D, bool) {
+func (c *CircularBuffer[D]) Read() (D, bool) {
 	return c.read()
 }
 
-func (c *circular[D]) read() (D, bool) {
+func (c *CircularBuffer[D]) read() (D, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -76,7 +76,7 @@ func (c *circular[D]) read() (D, bool) {
 	return d, true
 }
 
-func (c *circular[D]) ReadBatch(n int) []D {
+func (c *CircularBuffer[D]) ReadBatch(n int) []D {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

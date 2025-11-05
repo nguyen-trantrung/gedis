@@ -3,6 +3,7 @@ package resp_client
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 
 	"github.com/ttn-nguyen42/gedis/resp"
@@ -11,7 +12,7 @@ import (
 type Client struct {
 	host string
 	port int
-	conn net.Conn
+	net.Conn
 }
 
 func NewClient(host string, port int) (*Client, error) {
@@ -30,7 +31,7 @@ func (c *Client) connect() error {
 	if err != nil {
 		return err
 	}
-	c.conn = conn
+	c.Conn = conn
 	return nil
 }
 
@@ -39,23 +40,23 @@ func NewClientFromConn(conn net.Conn) *Client {
 	return &Client{
 		host: addr.IP.String(),
 		port: addr.Port,
-		conn: conn,
+		Conn: conn,
 	}
 }
 
 func (c *Client) Close() error {
-	if c.conn != nil {
-		return c.conn.Close()
+	if c.Conn != nil {
+		return c.Close()
 	}
 	return nil
 }
 
-func (c *Client) SendSync(ctx context.Context, cmd *resp.Command) (any, error) {
+func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, error) {
 	arr := cmd.Array()
-	if _, err := arr.WriteTo(c.conn); err != nil {
+	if _, err := arr.WriteTo(c); err != nil {
 		return nil, err
 	}
-	out, err := resp.ParseValue(c.conn)
+	out, err := resp.ParseValue(c)
 	if err != nil {
 		return nil, fmt.Errorf("invalid output: %w", err)
 	}
@@ -68,18 +69,22 @@ func (c *Client) SendSync(ctx context.Context, cmd *resp.Command) (any, error) {
 
 func (c *Client) SendBinary(ctx context.Context, data []byte) error {
 	proto := fmt.Sprintf("$%d\r\n", len(data))
-	if _, err := c.conn.Write([]byte(proto)); err != nil {
+	n, err := c.Write([]byte(proto))
+	if err != nil {
 		return err
 	}
-	if _, err := c.conn.Write(data); err != nil {
+	log.Printf("written to replication stream, l=%d", n)
+	n, err = c.Write(data)
+	if err != nil {
 		return err
 	}
+	log.Printf("written to replication stream, l=%d", n)
 	return nil
 }
 
-func (c *Client) SendForget(ctx context.Context, cmd *resp.Command) error {
+func (c *Client) SendForget(ctx context.Context, cmd resp.Command) error {
 	arr := cmd.Array()
-	if _, err := arr.WriteTo(c.conn); err != nil {
+	if _, err := arr.WriteTo(c); err != nil {
 		return err
 	}
 	return nil

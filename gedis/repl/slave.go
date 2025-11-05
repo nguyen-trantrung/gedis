@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ttn-nguyen42/gedis/data"
+	gedis_types "github.com/ttn-nguyen42/gedis/gedis/types"
 	"github.com/ttn-nguyen42/gedis/resp"
 	resp_client "github.com/ttn-nguyen42/gedis/resp/client"
 )
@@ -41,16 +43,28 @@ func newHostPort(url string) (*hostPort, error) {
 }
 
 type Slave struct {
-	master *hostPort
-	client *resp_client.Client
-	myPort int
+	master     *hostPort
+	client     *resp_client.Client
+	myPort     int
+	changesBuf *data.CircularBuffer[resp.Command]
+	connState  *gedis_types.ConnState
 }
 
 func NewSlave(masterUrl string, myPort int) (*Slave, error) {
-	slave := &Slave{myPort: myPort}
+	slave := &Slave{
+		myPort:     myPort,
+		changesBuf: data.NewCircularBuffer[resp.Command](1024),
+		connState: &gedis_types.ConnState{
+			InTransaction: false,
+			Tx:            nil,
+			DbNumber:      -1,
+			Conn:          nil,
+		},
+	}
 	if err := slave.init(masterUrl); err != nil {
 		return nil, err
 	}
+	slave.connState.Conn = slave.client
 	return slave, nil
 }
 
@@ -85,33 +99,75 @@ func (s *Slave) Handshake(ctx context.Context) error {
 
 	lp := []any{"listening-port", fmt.Sprintf("%d", s.myPort)}
 	if err := s.replConf(ctx, lp); err != nil {
-		return fmt.Errorf("replconf master err: %w", err)
+		return fmt.Errorf("replconf listening-port err: %w", err)
 	}
 	capa := []any{"capa", "psync2"}
 	if err := s.replConf(ctx, capa); err != nil {
-		return fmt.Errorf("replconf master err: %w", err)
+		return fmt.Errorf("replconf capa err: %w", err)
 	}
 	syncargs := []any{"?", "-1"}
 	if err := s.psync(ctx, syncargs); err != nil {
 		return fmt.Errorf("psync master err: %w", err)
 	}
+	log.Printf("handshake psync master success")
+	if err := s.readInitRdb(); err != nil {
+		return fmt.Errorf("read initial RDB err: %w", err)
+	}
+	log.Printf("handshake read initial RDB success")
+	go s.readSyncs(ctx)
 	return nil
 }
 
 func (s *Slave) ping(ctx context.Context) error {
 	cmd := resp.Command{Cmd: "PING", Args: nil}
-	_, err := s.client.SendSync(ctx, &cmd)
+	_, err := s.client.SendSync(ctx, cmd)
 	return err
 }
 
 func (s *Slave) replConf(ctx context.Context, args []any) error {
 	cmd := resp.Command{Cmd: "REPLCONF", Args: args}
-	_, err := s.client.SendSync(ctx, &cmd)
+	_, err := s.client.SendSync(ctx, cmd)
 	return err
 }
 
 func (s *Slave) psync(ctx context.Context, args []any) error {
 	cmd := resp.Command{Cmd: "PSYNC", Args: args}
-	_, err := s.client.SendSync(ctx, &cmd)
+	_, err := s.client.SendSync(ctx, cmd)
 	return err
 }
+
+func (s *Slave) readInitRdb() error {
+	value, err := resp.ParseRDBFile(s.client)
+	if err != nil {
+		return fmt.Errorf("failed to read init RDB from master: %w", err)
+	}
+	log.Printf("received initial RDB from master, len=%d", len(value))
+	return nil
+}
+
+func (s *Slave) readSyncs(ctx context.Context) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			cmd, err := resp.ParseCmd(s.client)
+			if err != nil {
+				return fmt.Errorf("failed to read sync from master: %w", err)
+			}
+			s.changesBuf.Send(ctx, cmd)
+		}
+	}
+}
+
+func (s *Slave) GetChanges(n int) []*gedis_types.Command {
+	cmds := make([]*gedis_types.Command, 0, n)
+	rcmds := s.changesBuf.ReadBatch(n)
+
+	for _, cmd := range rcmds {
+		rCmd := gedis_types.NewReplCommand(cmd, s.connState, s.master.String())
+		cmds = append(cmds, rCmd)
+	}
+	return cmds
+}
+	

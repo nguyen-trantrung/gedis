@@ -32,6 +32,14 @@ func ParseValue(r io.Reader) (any, error) {
 	return p.parse()
 }
 
+// ParseRDBFile parses an RDB file from the byte stream.
+// RDB files are sent in the format: $<length>\r\n<binary_contents>
+// Unlike bulk strings, they don't have a trailing \r\n
+func ParseRDBFile(r io.Reader) ([]byte, error) {
+	p := parser{newStreamIter(r)}
+	return p.parseRDBFile()
+}
+
 func parseTokens(tokens []Token) ([]Command, error) {
 	p := parser{&listIter{tokens: tokens}}
 	return p.parseCmds()
@@ -293,6 +301,46 @@ func (p *parser) parseSet(n int) (Set, error) {
 	}
 
 	return s, nil
+}
+
+func (p *parser) parseRDBFile() ([]byte, error) {
+	// First, read the $<length>\r\n part using the normal token parsing
+	curr, err := p.Next()
+	if err != nil {
+		return nil, err
+	}
+
+	if curr.Type != TokenTypeBulkString {
+		return nil, fmt.Errorf("%w: expected bulk string for RDB file, got %v", ErrInvalidToken, curr.Type)
+	}
+
+	size := curr.Value.(int)
+	if size < 0 {
+		return nil, fmt.Errorf("%w: invalid RDB file size: %d", ErrInvalidToken, size)
+	}
+
+	if size == 0 {
+		return []byte{}, nil
+	}
+
+	// For the binary data part, we need to read directly from the underlying reader
+	// because the scanner expects lines to end with \r\n, but RDB data is binary
+	streamIter, ok := p.Iter.(*streamIter)
+	if !ok {
+		return nil, fmt.Errorf("%w: RDB parsing only supported for stream input", ErrInvalidToken)
+	}
+
+	data := make([]byte, size)
+	n, err := io.ReadFull(streamIter.r, data)
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to read RDB file data: %v", ErrInvalidToken, err)
+	}
+
+	if n != size {
+		return nil, fmt.Errorf("%w: expected %d bytes but read %d", ErrInvalidToken, size, n)
+	}
+
+	return data, nil
 }
 
 type Iter interface {

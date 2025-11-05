@@ -9,11 +9,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ttn-nguyen42/gedis/data"
 	"github.com/ttn-nguyen42/gedis/gedis/info"
+	"github.com/ttn-nguyen42/gedis/resp"
 	resp_client "github.com/ttn-nguyen42/gedis/resp/client"
 )
 
-// Add support for RDB later
 const EMPTY_RDB_BASE64 = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
 
 type slaveData struct {
@@ -21,6 +22,8 @@ type slaveData struct {
 	proto     string
 	conn      net.Conn
 	client    *resp_client.Client
+	currDb    int
+	isSyncing bool
 }
 
 var seededRand = newSeededRand()
@@ -35,6 +38,7 @@ type Master struct {
 	replOffset int64
 	info       *info.Info
 	slaves     map[string]*slaveData
+	buf        *data.CircularBuffer[resp.Command]
 }
 
 func NewMaster(info *info.Info) *Master {
@@ -43,6 +47,7 @@ func NewMaster(info *info.Info) *Master {
 		replOffset: 0,
 		info:       info,
 		slaves:     make(map[string]*slaveData),
+		buf:        data.NewCircularBuffer[resp.Command](1024),
 	}
 	m.syncInfo()
 	return m
@@ -87,6 +92,8 @@ func (m *Master) AddSlave(conn net.Conn, theirPort int) error {
 		theirPort: theirPort,
 		proto:     "",
 		conn:      conn,
+		currDb:    -1,
+		isSyncing: false,
 	}
 	sd.client = resp_client.NewClientFromConn(conn)
 	m.slaves[conn.RemoteAddr().String()] = sd
@@ -100,6 +107,17 @@ func (m *Master) GetSlave(addr string) (*slaveData, bool) {
 
 	sd, ok := m.slaves[addr]
 	return sd, ok
+}
+
+func (m *Master) IsSyncing(addr string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	sd, ok := m.slaves[addr]
+	if !ok {
+		return false
+	}
+	return sd.isSyncing
 }
 
 func (m *Master) SetSlaveProto(conn net.Conn, proto string) bool {
@@ -134,11 +152,47 @@ func (m *Master) InitialRdbSync(addr string) error {
 		return fmt.Errorf("slave not found: %s", addr)
 	}
 
-	bdata, _ := base64.StdEncoding.DecodeString(EMPTY_RDB_BASE64)
-	err := sd.client.SendBinary(context.TODO(), bdata)
+	bdata, err := base64.StdEncoding.DecodeString(EMPTY_RDB_BASE64)
+	if err != nil {
+		return fmt.Errorf("failed to decode RDB data: %w", err)
+	}
+	err = sd.client.SendBinary(context.TODO(), bdata)
 	if err != nil {
 		return fmt.Errorf("failed to sync RDB to slave: %w", err)
 	}
 
+	return nil
+}
+
+func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	defer m.syncInfo()
+
+	for _, sd := range m.slaves {
+		if err := m.selectDb(sd, db); err != nil {
+			return err
+		}
+	}
+
+	m.buf.Send(ctx, cmd)
+	return nil
+}
+
+func (m *Master) selectDb(sd *slaveData, db int) error {
+	if sd.currDb == db {
+		return nil
+	}
+	items := []any{"SELECT", fmt.Sprintf("%d", db)}
+	selectCmd, err := resp.NewCommand(resp.Array{Size: len(items), Items: items})
+	if err != nil {
+		return fmt.Errorf("failed to create SELECT command: %w", err)
+	}
+	err = sd.client.SendForget(context.TODO(), selectCmd)
+	if err != nil {
+		return fmt.Errorf("failed to select db %d on slave: %w", db, err)
+	}
+	sd.currDb = db
 	return nil
 }

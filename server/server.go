@@ -13,6 +13,7 @@ import (
 
 	"github.com/ttn-nguyen42/gedis/gedis"
 	"github.com/ttn-nguyen42/gedis/gedis/info"
+	gedis_types "github.com/ttn-nguyen42/gedis/gedis/types"
 	"github.com/ttn-nguyen42/gedis/resp"
 )
 
@@ -101,8 +102,8 @@ func (s *Server) closeConn(ctx context.Context) error {
 
 type connState struct {
 	mu        sync.Mutex
-	pending   []*gedis.Command
-	connState *gedis.ConnState
+	pending   []*gedis_types.Command
+	connState *gedis_types.ConnState
 }
 
 func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
@@ -110,8 +111,8 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 	ctx, cancel := context.WithCancel(baseCtx)
 
 	state := &connState{
-		pending:   make([]*gedis.Command, 0),
-		connState: gedis.NewConnState(conn),
+		pending:   make([]*gedis_types.Command, 0),
+		connState: gedis_types.NewConnState(conn),
 	}
 
 	wg := sync.WaitGroup{}
@@ -146,13 +147,13 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 				continue
 			}
 
-			rCmd := gedis.NewCommand(cmd, state.connState, conn.RemoteAddr().String())
+			rCmd := gedis_types.NewCommand(cmd, state.connState, conn.RemoteAddr().String())
 			rCmd.ConnState = state.connState
 			state.mu.Lock()
 			state.pending = append(state.pending, rCmd)
 			state.mu.Unlock()
 
-			if err := s.core.Submit(ctx, []*gedis.Command{rCmd}); err != nil {
+			if err := s.core.Submit(ctx, []*gedis_types.Command{rCmd}); err != nil {
 				var netOpErr *net.OpError
 				if errors.Is(err, context.DeadlineExceeded) {
 					log.Printf("context canceled, stop submitting commands")

@@ -4,10 +4,11 @@ import (
 	"log"
 
 	"github.com/ttn-nguyen42/gedis/data"
+	gedis_types "github.com/ttn-nguyen42/gedis/gedis/types"
 )
 
 type blockingOps struct {
-	blockLpop map[any][]*Command
+	blockLpop map[any][]*gedis_types.Command
 }
 
 type database struct {
@@ -23,7 +24,7 @@ func newDb(n int) *database {
 		hm:   data.NewHashMap(),
 		list: make(map[any]*data.LinkedList),
 		block: &blockingOps{
-			blockLpop: make(map[any][]*Command),
+			blockLpop: make(map[any][]*gedis_types.Command),
 		},
 	}
 }

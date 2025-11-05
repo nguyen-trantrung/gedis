@@ -1,4 +1,4 @@
-package gedis
+package gedis_types
 
 import "net"
 
