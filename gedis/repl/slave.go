@@ -170,4 +170,3 @@ func (s *Slave) GetChanges(n int) []*gedis_types.Command {
 	}
 	return cmds
 }
-	

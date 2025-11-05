@@ -156,6 +156,7 @@ func (m *Master) InitialRdbSync(addr string) error {
 	if err != nil {
 		return fmt.Errorf("failed to decode RDB data: %w", err)
 	}
+
 	err = sd.client.SendBinary(context.TODO(), bdata)
 	if err != nil {
 		return fmt.Errorf("failed to sync RDB to slave: %w", err)

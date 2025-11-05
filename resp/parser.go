@@ -36,8 +36,9 @@ func ParseValue(r io.Reader) (any, error) {
 // RDB files are sent in the format: $<length>\r\n<binary_contents>
 // Unlike bulk strings, they don't have a trailing \r\n
 func ParseRDBFile(r io.Reader) ([]byte, error) {
-	p := parser{newStreamIter(r)}
-	return p.parseRDBFile()
+	sc := &scanner{str: bufio.NewReader(r)}
+	iter := newStreamIterFromScanner(sc)
+	return parseRDBFileStream(iter, sc.str)
 }
 
 func parseTokens(tokens []Token) ([]Command, error) {
@@ -303,9 +304,9 @@ func (p *parser) parseSet(n int) (Set, error) {
 	return s, nil
 }
 
-func (p *parser) parseRDBFile() ([]byte, error) {
+func parseRDBFileStream(iter Iter, rawIo io.Reader) ([]byte, error) {
 	// First, read the $<length>\r\n part using the normal token parsing
-	curr, err := p.Next()
+	curr, err := iter.Next()
 	if err != nil {
 		return nil, err
 	}
@@ -323,15 +324,8 @@ func (p *parser) parseRDBFile() ([]byte, error) {
 		return []byte{}, nil
 	}
 
-	// For the binary data part, we need to read directly from the underlying reader
-	// because the scanner expects lines to end with \r\n, but RDB data is binary
-	streamIter, ok := p.Iter.(*streamIter)
-	if !ok {
-		return nil, fmt.Errorf("%w: RDB parsing only supported for stream input", ErrInvalidToken)
-	}
-
 	data := make([]byte, size)
-	n, err := io.ReadFull(streamIter.r, data)
+	n, err := io.ReadFull(rawIo, data)
 	if err != nil {
 		return nil, fmt.Errorf("%w: failed to read RDB file data: %v", ErrInvalidToken, err)
 	}
@@ -374,14 +368,17 @@ func (p *listIter) isEnd() bool {
 
 type streamIter struct {
 	sc        *scanner
-	r         io.Reader
 	lastToken *Token
 }
 
 func newStreamIter(r io.Reader) *streamIter {
-	sc := &scanner{str: bufio.NewReader(r)}
+	sc := &scanner{str: r}
+	si := newStreamIterFromScanner(sc)
+	return si
+}
+
+func newStreamIterFromScanner(sc *scanner) *streamIter {
 	si := &streamIter{
-		r:         r,
 		sc:        sc,
 		lastToken: nil,
 	}

@@ -1,7 +1,6 @@
 package resp
 
 import (
-	"bufio"
 	"fmt"
 	"io"
 	"math/big"
@@ -18,7 +17,7 @@ const (
 )
 
 type scanner struct {
-	str *bufio.Reader
+	str io.Reader
 }
 
 type line struct {
@@ -33,7 +32,7 @@ func Scan(str io.Reader) ([]Token, error) {
 
 func tokens(str io.Reader) ([]Token, error) {
 	sc := scanner{
-		str: bufio.NewReader(str),
+		str: str,
 	}
 	return sc.scanLines()
 }
@@ -63,12 +62,13 @@ func (s *scanner) nextLine() (*line, error) {
 	line := &line{
 		l: make([]byte, 0),
 	}
+	sb := make([]byte, 1)
 	for {
-		b, err := s.str.ReadByte()
+		_, err := s.str.Read(sb)
 		if err != nil {
 			return nil, err
 		}
-		line.l = append(line.l, b)
+		line.l = append(line.l, sb[0])
 		if len(line.l) >= _512MB {
 			return nil, ErrTooManyBytes
 		}
