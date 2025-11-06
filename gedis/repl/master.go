@@ -364,9 +364,9 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 			}
 
 			if errors.Is(err, context.DeadlineExceeded) {
-				log.Printf("deadline exceeded asking offset from slave %s", sd.client.RemoteAddr())
+				log.Printf("deadline exceeded asking offset from slave %d", sd.theirPort)
 			} else {
-				log.Printf("failed to ask offset from slave %s: %v", sd.client.RemoteAddr(), err)
+				log.Printf("failed to ask offset from slave %d: %v", sd.theirPort, err)
 			}
 		}
 
