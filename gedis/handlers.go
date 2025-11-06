@@ -984,8 +984,7 @@ func (h *handlers) handleWait(cmd *gedis_types.Command) error {
 		deadline := time.Now().Add(time.Duration(timeout * int(time.Millisecond)))
 		cmd.SetTimeout(deadline)
 		cmd.SetTimeoutProducer(func() any {
-			// return h.master.InsyncSlaveCount()
-			return h.master.GetSlaveCount()
+			return h.master.InsyncSlaveCount()
 		})
 	}
 

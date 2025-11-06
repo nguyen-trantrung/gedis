@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"time"
 
 	"github.com/ttn-nguyen42/gedis/resp"
 )
@@ -55,11 +56,20 @@ func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, erro
 	arr := cmd.Array()
 	total := 0
 
+	dl, ok := ctx.Deadline()
+	if ok {
+		defer c.conn.SetDeadline(time.Time{})
+		if err := c.conn.SetDeadline(dl); err != nil {
+			return nil, 0, fmt.Errorf("failed to set deadline: %w", err)
+		}
+	}
+
 	if n, err := arr.WriteTo(c.conn); err != nil {
 		return nil, 0, err
 	} else {
 		total += int(n)
 	}
+
 	out, err := resp.ParseValue(c.conn)
 	if err != nil {
 		return nil, 0, fmt.Errorf("invalid output: %w", err)
@@ -68,7 +78,7 @@ func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, erro
 	if ok {
 		return nil, 0, fmt.Errorf("command error: %s", valerr.Value)
 	}
-	return out, 0, nil
+	return out, total, nil
 }
 
 func (c *Client) SendBinary(ctx context.Context, data []byte) (int, error) {

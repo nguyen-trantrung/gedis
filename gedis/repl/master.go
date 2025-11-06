@@ -288,7 +288,7 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 		// 	}
 		// 	return fmt.Errorf("failed to select db on slave, addr=%s: %w", sd.client.RemoteAddr(), err)
 		// }
-		n, err := sd.client.SendForget(ctx, cmd)
+		_, err := sd.client.SendForget(ctx, cmd)
 		if err != nil {
 			if m.isDisconnectedErr(err, sd) {
 				remv = append(remv, sk)
@@ -296,8 +296,9 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 			}
 			return fmt.Errorf("failed to send repl command to slave, addr=%s: %w", sd.client.RemoteAddr(), err)
 		}
-		m.addOffset(n)
 	}
+
+	m.addOffset(cmd.Size)
 
 	if len(remv) > 0 {
 		for _, sk := range remv {
@@ -340,22 +341,40 @@ func (m *Master) AskOffsets(ctx context.Context) ([]int64, error) {
 	rm := make([]string, 0, len(m.slaves))
 	insyncCount := 0
 
+	var err error
+
+	var written int
 	for sk, sd := range m.slaves {
 		if !sd.completeHandshake() {
 			continue
 		}
+		var offset int
 
-		offset, err := m.askOffset(ctx, sd)
+		offset, written, err = m.askOffset(ctx, sd)
 		if err != nil {
 			if m.isDisconnectedErr(err, sd) {
 				rm = append(rm, sk)
 				continue
 			}
-			return nil, fmt.Errorf("failed to ask offset from slave %s: %w", sd.client.RemoteAddr(), err)
+
+			if errors.Is(err, context.DeadlineExceeded) {
+				log.Printf("deadline exceeded asking offset from slave %s", sd.client.RemoteAddr())
+				continue
+			}
+
+			log.Printf("failed to ask offset from slave %s: %v", sd.client.RemoteAddr(), err)
+			continue
 		}
+
 		offsets = append(offsets, int64(offset))
-		insyncCount += 1
+		log.Println("COMPARE", m.replOffset, offset)
+		if m.replOffset == int64(offset) {
+			log.Println("EQUAL", m.replOffset, offset)
+			insyncCount += 1
+		}
 	}
+
+	m.replOffset += int64(written)
 
 	for _, sk := range rm {
 		delete(m.slaves, sk)
@@ -365,28 +384,28 @@ func (m *Master) AskOffsets(ctx context.Context) ([]int64, error) {
 	return offsets, nil
 }
 
-func (m *Master) askOffset(ctx context.Context, sd *slaveData) (int, error) {
+func (m *Master) askOffset(ctx context.Context, sd *slaveData) (int, int, error) {
 	getAck := resp.Command{
 		Cmd:  "REPLCONF",
 		Args: []any{"GETACK", resp.BulkStr{Value: "*", Size: 1}},
 	}
-	r, _, err := sd.client.SendSync(ctx, getAck)
+	r, n, err := sd.client.SendSync(ctx, getAck)
 	if err != nil {
-		return -1, fmt.Errorf("failed to send REPLCONF GETACK to slave: %w", err)
+		return -1, 0, fmt.Errorf("failed to send REPLCONF GETACK to slave: %w", err)
 	}
 	arr, ok := r.(resp.Array)
 	if !ok || len(arr.Items) != 3 {
-		return -1, fmt.Errorf("invalid REPLCONF GETACK response from slave: %+v", r)
+		return -1, 0, fmt.Errorf("invalid REPLCONF GETACK response from slave: %+v", r)
 	}
 	offsetStr, ok := arr.Items[len(arr.Items)-1].(resp.BulkStr)
 	if !ok {
-		return -1, fmt.Errorf("invalid REPLCONF GETACK offset from slave: %+v", arr.Items[1])
+		return -1, 0, fmt.Errorf("invalid REPLCONF GETACK offset from slave: %+v", arr.Items[1])
 	}
 	offset, err := strconv.Atoi(offsetStr.Value)
 	if err != nil {
-		return -1, fmt.Errorf("invalid REPLCONF GETACK offset value from slave: %v", offsetStr)
+		return -1, 0, fmt.Errorf("invalid REPLCONF GETACK offset value from slave: %v", offsetStr)
 	}
-	return offset, nil
+	return offset, n, nil
 }
 
 func (s *Master) GetSlaveCount() int {
@@ -407,4 +426,11 @@ func (s *Master) InsyncSlaveCount() int {
 	defer s.mu.RUnlock()
 
 	return s.curInsyncCount
+}
+
+func (s *Master) IncrOffset(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.replOffset += int64(n)
 }
