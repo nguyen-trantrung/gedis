@@ -403,6 +403,7 @@ func (s *Master) InsyncSlaveCount() int {
 			continue
 		}
 		if int64(sd.lastOffset) < s.replOffset {
+			log.Printf("slave %d out of sync: last=%d master=%d",sd.theirPort, sd.lastOffset, s.replOffset)
 			continue
 		}
 		total += 1
