@@ -39,6 +39,7 @@ type slaveData struct {
 	isSyncing        bool
 	hndshkProcedures map[HandshakeStep]bool
 	isReady          bool
+	lastOffset       int
 }
 
 func (s *slaveData) completeHandshake() bool {
@@ -59,6 +60,7 @@ type Master struct {
 	slaves         map[string]*slaveData
 	buf            *data.CircularBuffer[resp.Command]
 	curInsyncCount int
+	isDirty        bool
 }
 
 func NewMaster(info *info.Info) *Master {
@@ -68,6 +70,7 @@ func NewMaster(info *info.Info) *Master {
 		info:       info,
 		slaves:     make(map[string]*slaveData),
 		buf:        data.NewCircularBuffer[resp.Command](1024),
+		isDirty:    true,
 	}
 	m.syncInfo()
 	return m
@@ -333,13 +336,16 @@ func (m *Master) addOffset(n int) {
 	m.replOffset += int64(n)
 }
 
-func (m *Master) AskOffsets(ctx context.Context) ([]int64, error) {
+func (m *Master) AskOffsets(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	offsets := make([]int64, 0, len(m.slaves))
 	rm := make([]string, 0, len(m.slaves))
 	insyncCount := 0
+
+	if !m.isDirty {
+		return nil
+	}
 
 	var err error
 
@@ -359,29 +365,34 @@ func (m *Master) AskOffsets(ctx context.Context) ([]int64, error) {
 
 			if errors.Is(err, context.DeadlineExceeded) {
 				log.Printf("deadline exceeded asking offset from slave %s", sd.client.RemoteAddr())
-				continue
+			} else {
+				log.Printf("failed to ask offset from slave %s: %v", sd.client.RemoteAddr(), err)
 			}
-
-			log.Printf("failed to ask offset from slave %s: %v", sd.client.RemoteAddr(), err)
-			continue
 		}
 
-		offsets = append(offsets, int64(offset))
-		log.Println("COMPARE", m.replOffset, offset)
-		if m.replOffset == int64(offset) {
-			log.Println("EQUAL", m.replOffset, offset)
+		if offset != -1 {
+			sd.lastOffset = offset
+			log.Println("set last offset to", offset)
+		}
+
+		if m.replOffset == int64(sd.lastOffset) {
 			insyncCount += 1
+		} else {
+			log.Println("check", m.replOffset, sd.lastOffset)
 		}
 	}
 
 	m.replOffset += int64(written)
+	if insyncCount == len(m.slaves) {
+		m.isDirty = false
+	}
 
 	for _, sk := range rm {
 		delete(m.slaves, sk)
 	}
 
 	m.curInsyncCount = insyncCount
-	return offsets, nil
+	return nil
 }
 
 func (m *Master) askOffset(ctx context.Context, sd *slaveData) (int, int, error) {
@@ -389,6 +400,7 @@ func (m *Master) askOffset(ctx context.Context, sd *slaveData) (int, int, error)
 		Cmd:  "REPLCONF",
 		Args: []any{"GETACK", resp.BulkStr{Value: "*", Size: 1}},
 	}
+
 	r, n, err := sd.client.SendSync(ctx, getAck)
 	if err != nil {
 		return -1, 0, fmt.Errorf("failed to send REPLCONF GETACK to slave: %w", err)
@@ -433,4 +445,5 @@ func (s *Master) IncrOffset(n int) {
 	defer s.mu.Unlock()
 
 	s.replOffset += int64(n)
+	s.isDirty = true
 }

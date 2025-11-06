@@ -22,7 +22,6 @@ type Instance struct {
 	options           *Options
 	slave             *repl.Slave
 	master            *repl.Master
-	lastOffsetAskTime time.Time
 }
 
 func NewInstance(cap int, opts ...Option) (*Instance, error) {
@@ -120,11 +119,9 @@ func (i *Instance) loop(ctx context.Context) {
 		}
 
 		if pendingWaits > 0 {
-			now := time.Now()
 
-			if i.master.GetSlaveCount() > 0 && now.Sub(i.lastOffsetAskTime) >= 50*time.Millisecond {
-				i.lastOffsetAskTime = now
-				_, err := i.master.AskOffsets(ctx)
+			if i.master.GetSlaveCount() > 0 {
+				err := i.master.AskOffsets(ctx)
 				if err != nil {
 					log.Printf("failed to ask offsets from slaves: %v", err)
 				}
@@ -188,7 +185,7 @@ func (i *Instance) processCmd(ctx context.Context, cmd *gedis_types.Command) {
 		i.slave.IncrOffset(cmd.Cmd.Size)
 	}
 
-	if i.isMaster() && !cmd.OmitOffset() {
+	if i.isMaster() && !cmd.OmitOffset() && shouldReplicate {
 		i.master.IncrOffset(cmd.Cmd.Size)
 	}
 
