@@ -115,6 +115,7 @@ func (s *Slave) Handshake(ctx context.Context) error {
 	if err := s.replConf(ctx, lp); err != nil {
 		return fmt.Errorf("replconf listening-port err: %w", err)
 	}
+
 	capa := []any{"capa", "psync2"}
 	if err := s.replConf(ctx, capa); err != nil {
 		return fmt.Errorf("replconf capa err: %w", err)
@@ -236,9 +237,6 @@ func (s *Slave) beginHandleSyncs(ctx context.Context) error {
 						cmd.Defer()
 					}
 
-					if !cmd.OmitOffset() {
-						s.IncrOffset(l)
-					}
 					s.state.pending = s.state.pending[1:]
 				}
 			}

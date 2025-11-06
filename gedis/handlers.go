@@ -15,9 +15,8 @@ import (
 )
 
 type waitEntry struct {
-	cmd      *gedis_types.Command
-	count    int
-	curCount int
+	cmd   *gedis_types.Command
+	count int
 }
 
 var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
@@ -633,7 +632,6 @@ func (h *handlers) resolveBlockLpop(key string, cmd *gedis_types.Command) (ok bo
 func (h *handlers) handleIncr(cmd *gedis_types.Command) error {
 	args := cmd.Cmd.Args
 	if len(args) != 1 {
-		log.Println(args)
 		return fmt.Errorf("%w: requires exactly 1 argument", ErrInvalidArguments)
 	}
 
@@ -817,10 +815,7 @@ func (h *handlers) handleInfo(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
-	defer func() {
-		cmd.SetDone()
-		cmd.SetOmitOffset(true)
-	}()
+	defer cmd.SetDone()
 
 	if h.checkInTx(cmd) {
 		return nil
@@ -843,24 +838,23 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 			return fmt.Errorf("%w: REPLCONF only valid on a master", ErrInvalidArguments)
 		}
 
-		// This is the first step - no dependencies
-		portnum, err := parseInt(args[1])
+		theirPort, err := parseInt(args[1])
 		if err != nil {
 			return fmt.Errorf("%w: invalid port number: %w", ErrInvalidArguments, err)
 		}
-		err = h.master.AddSlave(state.Conn, portnum)
+
+		err = h.master.AddSlave(state.Conn, theirPort)
 		if err != nil {
-			return err
+			return fmt.Errorf("%w: failed to add slave: %w", ErrInvalidArguments, err)
 		}
 
-		// Mark this handshake step as completed
-		state.AddHandshakeStep(gedis_types.HandshakeListeningPort)
+		h.master.AddHandshakeStep(state.Conn.RemoteAddr().String(), repl.HandshakeListeningPort)
+
 		cmd.WriteAny("OK")
-
 	case "getack":
-		if !cmd.IsRepl() {
-			return fmt.Errorf("%w: REPLCONF only valid for replication connections", ErrInvalidArguments)
-		}
+		// if !cmd.IsRepl() {
+		// 	return fmt.Errorf("%w: REPLCONF only valid for replication connections", ErrInvalidArguments)
+		// }
 
 		arg := args[1]
 		ackOffset := 0
@@ -880,12 +874,17 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 
 		_ = ackOffset
 
-		offsetStr := fmt.Sprintf("%d", h.slave.ReplOffset())
+		offset := 0
+		if h.isSlave {
+			offset = h.slave.ReplOffset()
+		} else {
+			offset = int(h.master.ReplOffset())
+		}
 		res := resp.Command{
 			Cmd: "REPLCONF",
 			Args: []any{
-				resp.BulkStr{Value: "ACK", Size: 3},
-				resp.BulkStr{Value: offsetStr, Size: len(offsetStr)},
+				"ACK",
+				fmt.Sprintf("%d", offset),
 			},
 		}
 		cmd.WriteAny(res.Array())
@@ -895,7 +894,8 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 			return fmt.Errorf("%w: REPLCONF only valid on a master", ErrInvalidArguments)
 		}
 
-		if !state.HasHandshakeStep(gedis_types.HandshakeListeningPort) {
+		addr := state.Conn.RemoteAddr().String()
+		if !h.master.HasHandshakeStep(addr, repl.HandshakeListeningPort) {
 			return fmt.Errorf("%w: REPLCONF capa must come after listening-port", ErrInvalidArguments)
 		}
 
@@ -908,7 +908,7 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 			return fmt.Errorf("%w: slave not registered yet", ErrInvalidArguments)
 		}
 
-		state.AddHandshakeStep(gedis_types.HandshakeCapa)
+		h.master.AddHandshakeStep(addr, repl.HandshakeCapa)
 		cmd.WriteAny("OK")
 
 	default:
@@ -928,50 +928,27 @@ func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
 	}
 
 	state := cmd.ConnState
+	addr := state.Conn.RemoteAddr().String()
 
-	if !state.HasHandshakeStep(gedis_types.HandshakeCapa) {
+	if !h.master.HasHandshakeStep(addr, repl.HandshakeCapa) {
 		return fmt.Errorf("%w: PSYNC must come after REPLCONF capa", ErrInvalidArguments)
 	}
 
-	str := fmt.Sprintf("FULLRESYNC %s %d", h.master.ReplId(), h.master.ReplOffset())
-	sarr := resp.BulkStr{Size: len(str), Value: str}
-	cmd.WriteAny(sarr)
+	str := fmt.Sprintf("FULLRESYNC %s %d", h.master.ReplId(), 0)
+	cmd.WriteAny(str)
 
-	state.AddHandshakeStep(gedis_types.HandshakePsync)
+	h.master.AddHandshakeStep(addr, repl.HandshakePsync)
 
 	cmd.SetDefer(func() {
-		_, found := h.master.GetSlave(state.Conn.RemoteAddr().String())
-		if found {
-			h.resolveInitRdbSync(state)
-		}
+		log.Printf("handshake complete, upgrading connection to replication mode, addr=%s, replicaCount=%d",
+			cmd.ConnState.Conn.RemoteAddr(),
+			h.master.GetSlaveCount())
+		state.UpgradeToReplication()
+
+		h.master.StartSync(addr)
 	})
 
 	return nil
-}
-
-func (h *handlers) resolveInitRdbSync(state *gedis_types.ConnState) {
-	addr := state.Conn.RemoteAddr().String()
-
-	if !state.HasHandshakeStep(gedis_types.HandshakePsync) {
-		log.Printf("rdb sync attempted before PSYNC completed, addr=%s", addr)
-		state.RsyncFailed()
-		return
-	}
-
-	err := h.master.InitialRdbSync(addr)
-	if err != nil {
-		log.Printf("rdb sync failed, addr=%s, err=%s", addr, err)
-		state.RsyncFailed()
-		return
-	}
-	log.Printf("master sync RDB to replica, addr=%s", addr)
-
-	state.RsyncSuccess()
-
-	if state.HandshakeComplete() {
-		log.Printf("handshake complete, upgrading connection to replication mode, addr=%s", addr)
-		state.UpgradeToReplication()
-	}
 }
 
 func (h *handlers) handleWait(cmd *gedis_types.Command) error {
@@ -993,22 +970,22 @@ func (h *handlers) handleWait(cmd *gedis_types.Command) error {
 		return err
 	}
 
-	timeout, err := parseFloat(args[1])
+	timeout, err := parseInt(args[1])
 	if err != nil {
 		return err
 	}
 
 	entry := &waitEntry{
-		cmd:      cmd,
-		count:    replicaCount,
-		curCount: 0,
+		cmd:   cmd,
+		count: replicaCount,
 	}
 
 	if timeout >= 0 {
-		deadline := time.Now().Add(time.Duration(timeout * float64(time.Second)))
+		deadline := time.Now().Add(time.Duration(timeout * int(time.Millisecond)))
 		cmd.SetTimeout(deadline)
 		cmd.SetTimeoutProducer(func() any {
-			return entry.curCount
+			// return h.master.InsyncSlaveCount()
+			return h.master.GetSlaveCount()
 		})
 	}
 
@@ -1024,16 +1001,15 @@ func (h *handlers) resolveWaits(inSync int) {
 	remv := make([]int, 0, len(h.waits))
 	for i := 0; i < len(h.waits); i += 1 {
 		entry := h.waits[i]
-		entry.curCount = inSync
 
 		if entry.cmd.HasTimedOut() {
 			remv = append(remv, i)
 			continue
 		}
 
-		if entry.curCount >= entry.count {
+		if inSync >= entry.count {
 			defer entry.cmd.SetDone()
-			entry.cmd.WriteAny(entry.curCount)
+			entry.cmd.WriteAny(inSync)
 			remv = append(remv, i)
 		}
 	}

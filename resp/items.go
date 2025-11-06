@@ -55,7 +55,13 @@ func (a Array) WriteTo(w io.Writer) (int64, error) {
 	total += int64(n)
 	if a.Size > 0 {
 		for _, item := range a.Items {
-			nn, err := WriteAnyTo(item, w)
+			blk, err := toBulkStr(item)
+			var nn int64
+			if err != nil {
+				nn, err = WriteAnyTo(item, w)
+			} else {
+				nn, err = blk.WriteTo(w)
+			}
 			total += nn
 			if err != nil {
 				return total, err

@@ -39,12 +39,29 @@ func bulkOrStr(str any) (string, error) {
 	}
 }
 
+func toBulkStr(arg any) (BulkStr, error) {
+	switch val := arg.(type) {
+	case string:
+		return BulkStr{Size: len(val), Value: val}, nil
+	case BulkStr:
+		return val, nil
+	default:
+		return BulkStr{}, fmt.Errorf("unknown string: %+v", arg)
+	}
+}
+
 func (c *Command) Array() Array {
 	arr := Array{
 		Size:  1 + len(c.Args),
 		Items: make([]any, 0, 1+len(c.Args)),
 	}
-	arr.Items = append(arr.Items, c.Cmd)
-	arr.Items = append(arr.Items, c.Args...)
+	arr.Items = append(arr.Items, BulkStr{Size: len(c.Cmd), Value: c.Cmd})
+	for _, arg := range c.Args {
+		str, err := toBulkStr(arg)
+		if err != nil {
+			continue
+		}
+		arr.Items = append(arr.Items, str)
+	}
 	return arr
 }

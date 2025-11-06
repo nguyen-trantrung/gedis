@@ -13,15 +13,16 @@ import (
 )
 
 type Instance struct {
-	info     *info.Info
-	cmdBuf   *data.CircularBuffer[*gedis_types.Command]
-	stop     chan struct{}
-	dbs      []*database
-	handlers map[int]*handlers
-	round    int
-	options  *Options
-	slave    *repl.Slave
-	master   *repl.Master
+	info              *info.Info
+	cmdBuf            *data.CircularBuffer[*gedis_types.Command]
+	stop              chan struct{}
+	dbs               []*database
+	handlers          map[int]*handlers
+	round             int
+	options           *Options
+	slave             *repl.Slave
+	master            *repl.Master
+	lastOffsetAskTime time.Time
 }
 
 func NewInstance(cap int, opts ...Option) (*Instance, error) {
@@ -114,21 +115,31 @@ func (i *Instance) loop(ctx context.Context) {
 
 	if i.isMaster() {
 		pendingWaits := 0
-
 		for _, h := range i.handlers {
 			pendingWaits += h.countWaits()
 		}
 
 		if pendingWaits > 0 {
-			offsets, err := i.master.AskOffsets(ctx)
-			if err != nil {
-				log.Printf("failed to ask offsets from slaves: %v", err)
-			}
+			// now := time.Now()
+			// if i.master.GetSlaveCount() > 0 && now.Sub(i.lastOffsetAskTime) >= 50*time.Millisecond {
+			// 	i.lastOffsetAskTime = now
+			// 	_, err := i.master.AskOffsets(ctx)
+			// 	if err != nil {
+			// 		log.Printf("failed to ask offsets from slaves: %v", err)
+			// 	}
+			// }
+
 			for _, h := range i.handlers {
-				h.resolveWaits(len(offsets))
+				h.resolveWaits(i.master.GetSlaveCount())
 			}
 		}
+	}
 
+	if i.isMaster() {
+		err := i.master.InitialRdbSync()
+		if err != nil {
+			log.Printf("failed to perform initial RDB sync to slaves: %v", err)
+		}
 	}
 
 	cmds := i.cmdBuf.ReadBatch(10)
@@ -170,6 +181,10 @@ func (i *Instance) processCmd(ctx context.Context, cmd *gedis_types.Command) {
 	if err := hdl(cmd); err != nil {
 		cmd.WriteAny(err)
 		cmd.SetDone()
+	}
+
+	if i.isSlave() && cmd.IsRepl() && !cmd.OmitOffset() {
+		i.slave.IncrOffset(cmd.Cmd.Size)
 	}
 
 	if !shouldReplicate {
