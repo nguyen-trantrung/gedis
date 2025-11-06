@@ -72,9 +72,10 @@ func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, erro
 	arr := cmd.Array()
 	total := 0
 
-	dl := time.Now().Add(100 * time.Millisecond)
+	past := time.Now()
+	dl := past.Add(100 * time.Millisecond)
 	c.conn.SetReadDeadline(dl)
-	//defer c.conn.SetReadDeadline(time.Time{})
+	defer c.conn.SetReadDeadline(time.Time{})
 
 	if n, err := arr.WriteTo(c.conn); err != nil {
 		if isTimeoutErr(err) {
@@ -88,7 +89,7 @@ func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, erro
 	out, err := resp.ParseValue(c.conn)
 	if err != nil {
 		if isTimeoutErr(err) {
-			log.Println("read time passed", time.Since(dl))
+			log.Println("read time passed", time.Since(past))
 			return nil, 0, context.DeadlineExceeded
 		}
 		return nil, 0, fmt.Errorf("invalid output: %w", err)

@@ -59,7 +59,6 @@ type Master struct {
 	info           *info.Info
 	slaves         map[string]*slaveData
 	buf            *data.CircularBuffer[resp.Command]
-	curInsyncCount int
 	isDirty        bool
 }
 
@@ -354,24 +353,24 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 		if !sd.completeHandshake() {
 			continue
 		}
-		var offset int
 
-		offset, written, err = m.askOffset(ctx, sd)
-		if err != nil {
-			if m.isDisconnectedErr(err, sd) {
-				rm = append(rm, sk)
-				continue
+		if int64(sd.lastOffset) < m.replOffset {
+			var offset int
+			offset, written, err = m.askOffset(ctx, sd)
+			if err != nil {
+				if m.isDisconnectedErr(err, sd) {
+					rm = append(rm, sk)
+					continue
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					log.Printf("deadline exceeded asking offset from slave %d", sd.theirPort)
+				} else {
+					log.Printf("failed to ask offset from slave %d: %v", sd.theirPort, err)
+				}
 			}
-
-			if errors.Is(err, context.DeadlineExceeded) {
-				log.Printf("deadline exceeded asking offset from slave %d", sd.theirPort)
-			} else {
-				log.Printf("failed to ask offset from slave %d: %v", sd.theirPort, err)
+			if offset != -1 {
+				sd.lastOffset = offset
 			}
-		}
-
-		if offset != -1 {
-			sd.lastOffset = offset
 		}
 
 		if m.replOffset == int64(sd.lastOffset) {
@@ -387,8 +386,6 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 	for _, sk := range rm {
 		delete(m.slaves, sk)
 	}
-
-	m.curInsyncCount = insyncCount
 	return nil
 }
 
@@ -434,7 +431,17 @@ func (s *Master) InsyncSlaveCount() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.curInsyncCount
+	total := 0
+	for _, sd := range s.slaves {
+		if !sd.isReady {
+			continue
+		}
+		if int64(sd.lastOffset) < s.replOffset {
+			continue
+		}
+		total += 1
+	}
+	return total
 }
 
 func (s *Master) IncrOffset(n int) {
