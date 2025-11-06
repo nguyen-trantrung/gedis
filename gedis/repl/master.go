@@ -372,13 +372,10 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 
 		if offset != -1 {
 			sd.lastOffset = offset
-			log.Println("set last offset to", offset)
 		}
 
 		if m.replOffset == int64(sd.lastOffset) {
 			insyncCount += 1
-		} else {
-			log.Println("check", m.replOffset, sd.lastOffset)
 		}
 	}
 
