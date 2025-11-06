@@ -172,3 +172,10 @@ func (c *Command) Db() int {
 func (c *Command) IsRepl() bool {
 	return c.isRepl
 }
+
+func (c *Command) IsSubMode() bool {
+	if c.ConnState != nil {
+		return c.ConnState.IsSubscription()
+	}
+	return false
+}

@@ -150,12 +150,15 @@ func (h *handlers) handlePing(cmd *gedis_types.Command) error {
 	}
 	if h.shouldWriteOutput(cmd) {
 		cmd.WriteAny("PONG")
+	} else if cmd.IsSubMode() {
+		arr := resp.Array{Size: 2, Items: []any{"PONG", ""}}
+		cmd.WriteAny(arr)
 	}
 	return nil
 }
 
 func (h *handlers) handleEcho(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	defer cmd.SetDone()
@@ -169,7 +172,7 @@ func (h *handlers) handleEcho(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleSelect(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	if len(cmd.Cmd.Args) < 1 {
@@ -220,7 +223,7 @@ func checkExpiry(args []any) (int, bool, error) {
 }
 
 func (h *handlers) handleSet(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -254,7 +257,7 @@ func (h *handlers) handleSet(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleGet(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -279,7 +282,7 @@ func (h *handlers) handleGet(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleRPush(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -325,7 +328,7 @@ func (h *handlers) handleRPush(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleLPush(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -371,7 +374,7 @@ func (h *handlers) handleLPush(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleLPop(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -445,7 +448,7 @@ func (h *handlers) handleLPop(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleRPop(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -521,7 +524,7 @@ func (h *handlers) handleRPop(cmd *gedis_types.Command) error {
 // (handleQuit removed due to incomplete implementation and not part of the allowed command set.)
 
 func (h *handlers) handleLRange(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -555,7 +558,7 @@ func (h *handlers) handleLRange(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleLLen(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -580,7 +583,7 @@ func (h *handlers) handleLLen(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleLIndex(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -617,7 +620,7 @@ func (h *handlers) handleLIndex(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleBlockLpop(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -675,7 +678,7 @@ func (h *handlers) resolveBlockLpop(key string, cmd *gedis_types.Command) (ok bo
 }
 
 func (h *handlers) handleIncr(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -725,7 +728,7 @@ func (h *handlers) handleIncr(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleMulti(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 
@@ -748,7 +751,7 @@ func (h *handlers) handleMulti(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleExec(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 
@@ -817,7 +820,7 @@ func (h *handlers) checkSlaveWrite(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleDiscard(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 
@@ -843,7 +846,7 @@ func (h *handlers) handleDiscard(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleInfo(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	defer cmd.SetDone()
@@ -875,7 +878,7 @@ func (h *handlers) handleInfo(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	defer cmd.SetDone()
@@ -977,7 +980,7 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	defer cmd.SetDone()
@@ -1014,7 +1017,7 @@ func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleWait(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	if h.checkInTx(cmd) {
@@ -1096,7 +1099,7 @@ func (h *handlers) handleSubscribe(cmd *gedis_types.Command) error {
 	}
 
 	var subId string
-	if !cmd.ConnState.IsSubscription() {
+	if !cmd.IsSubMode() {
 		subId = util.RandomId(32)
 		cmd.ConnState.UpgradeToSubscription(subId)
 	} else {
@@ -1132,7 +1135,7 @@ func (h *handlers) handleUnsubscribe(cmd *gedis_types.Command) error {
 		return fmt.Errorf("UNSUBSCRIBE not allowed in transaction")
 	}
 
-	if !cmd.ConnState.IsSubscription() {
+	if !cmd.IsSubMode() {
 		return fmt.Errorf("UNSUBSCRIBE not allowed outside subscribe mode")
 	}
 
@@ -1171,7 +1174,7 @@ func (h *handlers) handleUnsubscribe(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handlePublish(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	args := cmd.Cmd.Args
@@ -1198,7 +1201,7 @@ func (h *handlers) handlePublish(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleQuit(cmd *gedis_types.Command) error {
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
 	}
 	defer cmd.SetDone()
@@ -1212,7 +1215,7 @@ func (h *handlers) handleQuit(cmd *gedis_types.Command) error {
 	}
 
 	cmd.WriteAny("OK")
-	if cmd.ConnState.IsSubscription() {
+	if cmd.IsSubMode() {
 		cmd.ConnState.QuitSubscription()
 	}
 	return nil
