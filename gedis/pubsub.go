@@ -30,7 +30,15 @@ func newPubsub() *pubsub {
 func (p *pubsub) publish(channel string, message any) int {
 	q := p.initChannel(channel)
 	q.Enqueue(message)
-	return 0
+	return p.channelSubs(channel)
+}
+
+func (p *pubsub) channelSubs(channel string) int {
+	subscribers, ok := p.subs[channel]
+	if !ok {
+		return 0
+	}
+	return len(subscribers)
 }
 
 func (p *pubsub) initChannel(channel string) *data.Queue {
