@@ -304,11 +304,12 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 	defer m.mu.Unlock()
 
 	rm := make([]string, 0, len(m.slaves))
-	insyncCount := 0
 
 	if !m.isDirty {
 		return nil
 	}
+
+	updateToDate := 0
 
 	var err error
 
@@ -318,33 +319,33 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 			continue
 		}
 
-		if int64(sd.lastOffset) < m.replOffset {
-			var offset int
-			offset, written, err = m.askOffset(ctx, sd)
-			if err != nil {
-				if util.IsDisconnected(err) {
-					rm = append(rm, sk)
-					log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
-					continue
-				}
-				if errors.Is(err, context.DeadlineExceeded) {
-					log.Printf("deadline exceeded asking offset from slave %d", sd.theirPort)
-				} else {
-					log.Printf("failed to ask offset from slave %d: %v", sd.theirPort, err)
-				}
+		if int64(sd.lastOffset) >= m.replOffset {
+			updateToDate += 1
+		}
+
+		var offset int
+		offset, written, err = m.askOffset(ctx, sd)
+		if err != nil {
+			if util.IsDisconnected(err) {
+				rm = append(rm, sk)
+				log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
+				continue
 			}
-			if offset != -1 {
-				sd.lastOffset = offset
+			if errors.Is(err, context.DeadlineExceeded) {
+				log.Printf("deadline exceeded asking offset from slave %d", sd.theirPort)
+			} else {
+				log.Printf("failed to ask offset from slave %d: %v", sd.theirPort, err)
 			}
 		}
 
-		if m.replOffset == int64(sd.lastOffset) {
-			insyncCount += 1
+		if offset != -1 {
+			log.Printf("updated offset from slave %d: %d", sd.theirPort, offset)
+			sd.lastOffset = offset
 		}
 	}
 
 	m.replOffset += int64(written)
-	if insyncCount == len(m.slaves) {
+	if updateToDate == len(m.slaves) {
 		m.isDirty = false
 	}
 
