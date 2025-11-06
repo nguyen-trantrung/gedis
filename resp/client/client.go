@@ -88,6 +88,7 @@ func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, erro
 	out, err := resp.ParseValue(c.conn)
 	if err != nil {
 		if isTimeoutErr(err) {
+			log.Println("read time passed", time.Since(dl))
 			return nil, 0, context.DeadlineExceeded
 		}
 		return nil, 0, fmt.Errorf("invalid output: %w", err)
