@@ -11,41 +11,40 @@ import (
 type Bytes []byte
 
 type Command struct {
-	ConnState      *ConnState
-	Cmd            resp.Command
-	Addr           string
-	Defer          func()
-	out            *bytes.Buffer
-	done           bool
-	timedOut       time.Time
-	defTimedOutOut any
-	isRepl         bool
-	omitOffset     bool
+	ConnState       *ConnState
+	Cmd             resp.Command
+	Addr            string
+	Defer           func()
+	out             *bytes.Buffer
+	done            bool
+	timedOut        time.Time
+	timeOutProducer func() any
+	isRepl          bool
+	omitOffset      bool
 }
 
 func NewCommand(cmd resp.Command, state *ConnState, addr string) *Command {
 	return &Command{
-		Cmd:            cmd,
-		Addr:           addr,
-		ConnState:      state,
-		done:           false,
-		Defer:          nil,
-		defTimedOutOut: nil,
-		isRepl:         false,
-		omitOffset:     true,
+		Cmd:        cmd,
+		Addr:       addr,
+		ConnState:  state,
+		done:       false,
+		Defer:      nil,
+		isRepl:     false,
+		omitOffset: true,
 	}
 }
 
 func NewReplCommand(cmd resp.Command, state *ConnState, addr string) *Command {
 	return &Command{
-		Cmd:            cmd,
-		Addr:           addr,
-		ConnState:      state,
-		done:           false,
-		Defer:          nil,
-		defTimedOutOut: nil,
-		isRepl:         true,
-		omitOffset:     false,
+		Cmd:             cmd,
+		Addr:            addr,
+		ConnState:       state,
+		done:            false,
+		Defer:           nil,
+		timeOutProducer: nil,
+		isRepl:          true,
+		omitOffset:      false,
 	}
 }
 
@@ -89,8 +88,8 @@ func (c *Command) Output() *bytes.Buffer {
 	return c.out
 }
 
-func (c *Command) SetDefaultTimeoutOutput(data any) {
-	c.defTimedOutOut = data
+func (c *Command) SetTimeoutProducer(f func() any) {
+	c.timeOutProducer = f
 }
 
 func (c *Command) initBuf(d []byte) bool {
@@ -134,7 +133,10 @@ func (c *Command) Bytes() Bytes {
 func (c *Command) WriteTo(str io.Writer) (n int64, err error) {
 	if c.out == nil {
 		if c.HasTimedOut() {
-			return resp.WriteAnyTo(c.defTimedOutOut, str)
+			if c.timeOutProducer != nil {
+				return resp.WriteAnyTo(c.timeOutProducer(), str)
+			}
+			return resp.WriteAnyTo(resp.Array{Size: -1}, str)
 		}
 
 		return 0, nil
@@ -150,13 +152,13 @@ func (c *Command) Copy() *Command {
 	}
 	cmdCopy := c.Cmd
 	return &Command{
-		Cmd:            cmdCopy,
-		Addr:           c.Addr,
-		ConnState:      c.ConnState,
-		out:            outCopy,
-		done:           c.done,
-		timedOut:       c.timedOut,
-		defTimedOutOut: c.defTimedOutOut,
+		Cmd:             cmdCopy,
+		Addr:            c.Addr,
+		ConnState:       c.ConnState,
+		out:             outCopy,
+		done:            c.done,
+		timedOut:        c.timedOut,
+		timeOutProducer: c.timeOutProducer,
 	}
 }
 

@@ -169,6 +169,17 @@ func (m *Master) InitialRdbSync(addr string) error {
 	return nil
 }
 
+func (m *Master) isDisconnectedErr(err error, sd *slaveData) bool {
+	var op *net.OpError
+	if errors.As(err, &op) {
+		if strings.Contains(op.Error(), "closed") {
+			log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -176,18 +187,6 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 	defer m.syncInfo()
 
 	remv := make([]string, 0, len(m.slaves))
-
-	isDisconnected := func(err error, sk string, sd *slaveData) bool {
-		var op *net.OpError
-		if errors.As(err, &op) {
-			if strings.Contains(op.Error(), "closed") {
-				log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
-				remv = append(remv, sk)
-				return true
-			}
-		}
-		return false
-	}
 
 	for sk, sd := range m.slaves {
 		if sd.isSyncing {
@@ -202,7 +201,8 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 		// }
 		n, err := sd.client.SendForget(ctx, cmd)
 		if err != nil {
-			if isDisconnected(err, sk, sd) {
+			if m.isDisconnectedErr(err, sd) {
+				remv = append(remv, sk)
 				continue
 			}
 			return fmt.Errorf("failed to send repl command to slave, addr=%s: %w", sd.client.RemoteAddr(), err)
@@ -248,12 +248,21 @@ func (m *Master) AskOffsets(ctx context.Context) ([]int64, error) {
 	defer m.mu.RUnlock()
 
 	offsets := make([]int64, 0, len(m.slaves))
-	for _, sd := range m.slaves {
+	rm := make([]string, 0, len(m.slaves))
+	for sk, sd := range m.slaves {
 		offset, err := m.askOffset(ctx, sd)
 		if err != nil {
+			if m.isDisconnectedErr(err, sd) {
+				rm = append(rm, sk)
+				continue
+			}
 			return nil, fmt.Errorf("failed to ask offset from slave %s: %w", sd.client.RemoteAddr(), err)
 		}
 		offsets = append(offsets, int64(offset))
+	}
+
+	for _, sk := range rm {
+		delete(m.slaves, sk)
 	}
 	return offsets, nil
 }
@@ -261,7 +270,7 @@ func (m *Master) AskOffsets(ctx context.Context) ([]int64, error) {
 func (m *Master) askOffset(ctx context.Context, sd *slaveData) (int, error) {
 	getAck := resp.Command{
 		Cmd:  "REPLCONF",
-		Args: []any{"GETACK", "*"},
+		Args: []any{"GETACK", resp.BulkStr{Value: "*", Size: 1}},
 	}
 	r, _, err := sd.client.SendSync(ctx, getAck)
 	if err != nil {

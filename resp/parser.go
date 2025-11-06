@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math/big"
 	"net"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 var ErrInvalidToken = fmt.Errorf("invalid token")
 var ErrProtocolError = fmt.Errorf("protocol error")
+
+var cs int = 0
 
 // ParseCmd parses a single command from the byte stream.
 // It stops right after a valid command is found, not until end of stream.
@@ -30,7 +33,8 @@ func ParseCmd(r io.Reader) (Command, error) {
 // ParseValue parses a single RESP value from the byte stream.
 func ParseValue(r io.Reader) (any, error) {
 	p := parser{newStreamIter(r)}
-	return p.parse()
+	data, err := p.parse()
+	return data, err
 }
 
 // ParseRDBFile parses an RDB file from the byte stream.
@@ -90,8 +94,12 @@ func (p *parser) parse() (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		cs += 1
+		log.Println("array", cs)
 		return arr, nil
 	case TokenTypeSimpleString:
+		cs += 1
+		log.Println("simple string", cs)
 		return curr.Value.(string), nil
 	case TokenTypeSimpleError:
 		return Err{Value: curr.Value.(string), Size: curr.Size}, nil
@@ -235,12 +243,14 @@ func (p *parser) parseArray(n int) (Array, error) {
 	}
 	arr.Items = make([]any, 0, n)
 
+	idx := 0
 	for range n {
 		it, err := p.parse()
 		if err != nil {
 			return Array{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
 		}
 		arr.Items = append(arr.Items, it)
+		idx += 1
 	}
 
 	return arr, nil

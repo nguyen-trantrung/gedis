@@ -151,7 +151,7 @@ func (s *Slave) psync(ctx context.Context, args []any) error {
 }
 
 func (s *Slave) readInitRdb() error {
-	value, err := resp.ParseRDBFile(s.client)
+	value, err := resp.ParseRDBFile(s.client.Conn())
 	if err != nil {
 		return fmt.Errorf("failed to read init RDB from master: %w", err)
 	}
@@ -159,9 +159,8 @@ func (s *Slave) readInitRdb() error {
 	return nil
 }
 
-func (s *Slave) beginHandleSyncs(baseCtx context.Context) error {
+func (s *Slave) beginHandleSyncs(ctx context.Context) error {
 	log.Printf("beginning to handle sync commands from master")
-	ctx, cancel := context.WithCancel(baseCtx)
 
 	wg := sync.WaitGroup{}
 	wg.Add(2)
@@ -182,26 +181,31 @@ func (s *Slave) beginHandleSyncs(baseCtx context.Context) error {
 			default:
 			}
 
-			cmd, err := resp.ParseCmd(s.client)
+			cmd, err := resp.ParseCmd(s.client.Conn())
 			if err != nil {
 				if err == io.EOF {
-					log.Printf("master closed connection, stopping")
-				} else {
-					log.Printf("failed to read sync from master: %s", err)
+					log.Printf("master closed connection, stopping") //TODO: handle reconnection
+					return
 				}
-				cancel()
-				return
+
+				log.Printf("failed to read sync from master: %s", err)
+			} else {
+				log.Printf("received sync command from master: %s, size=%d, repl_offset=%d", cmd.Cmd, cmd.Size, s.ReplOffset())
 			}
 
-			log.Printf("received sync command from master: %s, size=%d, repl_offset=%d", cmd.Cmd, cmd.Size, s.ReplOffset())
-
 			replCmd := gedis_types.NewReplCommand(cmd, s.connState, s.master.String())
+			if err != nil {
+				replCmd.SetDone()
+				replCmd.WriteAny(err)
+			}
 
 			s.state.mu.Lock()
 			s.state.pending = append(s.state.pending, replCmd)
 			s.state.mu.Unlock()
 
-			s.changesBuf.Send(ctx, replCmd)
+			if err == nil {
+				s.changesBuf.Send(ctx, replCmd)
+			}
 		}
 	}()
 
@@ -220,12 +224,12 @@ func (s *Slave) beginHandleSyncs(baseCtx context.Context) error {
 
 				if cmd.IsDone() || cmd.HasTimedOut() {
 					l := cmd.Len()
-					if l >= 0 {
-						resp, err := cmd.WriteTo(s.connState.Conn)
+					if l > 0 {
+						resp, err := cmd.WriteTo(s.client.Conn())
 						if err != nil {
-							log.Printf("resp back to master err to TCP, err=%s, addr=%s", err, s.connState.Conn.RemoteAddr())
+							log.Printf("resp back to master err to TCP, err=%s, addr=%s", err, s.client.Conn().RemoteAddr())
 						} else {
-							log.Printf("written back to replication TCP stream, addr=%s n=%d", s.connState.Conn.RemoteAddr(), resp)
+							log.Printf("written back to replication TCP stream, addr=%s n=%d", s.client.Conn().RemoteAddr(), resp)
 						}
 					}
 					if cmd.Defer != nil {

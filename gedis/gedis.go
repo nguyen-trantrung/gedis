@@ -109,7 +109,6 @@ func (i *Instance) loop(ctx context.Context) {
 		for _, cmd := range replCmds {
 			log.Printf("repl command received, type '%s', addr=%s", cmd.Cmd.Cmd, cmd.Addr)
 			i.processCmd(ctx, cmd)
-			i.slave.IncrOffset(cmd.Cmd.Size)
 		}
 	}
 
@@ -121,14 +120,17 @@ func (i *Instance) loop(ctx context.Context) {
 		}
 
 		if pendingWaits > 0 {
+			log.Println("ask")
 			offsets, err := i.master.AskOffsets(ctx)
 			if err != nil {
 				log.Printf("failed to ask offsets from slaves: %v", err)
 			}
+			log.Println("resolve")
 			for _, h := range i.handlers {
 				h.resolveWaits(len(offsets))
 			}
 		}
+
 	}
 
 	cmds := i.cmdBuf.ReadBatch(10)

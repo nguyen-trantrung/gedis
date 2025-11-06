@@ -8,9 +8,16 @@ import (
 
 	"github.com/ttn-nguyen42/gedis/gedis"
 	"github.com/ttn-nguyen42/gedis/server"
+
+	"net/http"
+	_ "net/http/pprof"
 )
 
 func main() {
+	go func() {
+		log.Println(http.ListenAndServe("localhost:6060", nil)) // Serve pprof endpoints
+	}()
+
 	ctx := server.CancelOnSignal(context.Background())
 	s, err := getServer()
 	if err != nil {

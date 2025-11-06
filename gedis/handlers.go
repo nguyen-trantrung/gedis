@@ -15,8 +15,9 @@ import (
 )
 
 type waitEntry struct {
-	cmd   *gedis_types.Command
-	count int
+	cmd      *gedis_types.Command
+	count    int
+	curCount int
 }
 
 var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
@@ -35,7 +36,7 @@ type handlers struct {
 	db      *database
 	info    *info.Info
 	hmap    map[string]handlerEntry
-	waits   []waitEntry
+	waits   []*waitEntry
 }
 
 func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl.Slave) *handlers {
@@ -46,7 +47,7 @@ func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl
 		isSlave: slave != nil,
 		master:  master,
 		slave:   slave,
-		waits:   make([]waitEntry, 0),
+		waits:   make([]*waitEntry, 0),
 	}
 	hdl.init()
 	return hdl
@@ -600,7 +601,6 @@ func (h *handlers) handleBlockLpop(cmd *gedis_types.Command) error {
 
 	if timeout != 0 {
 		cmd.SetTimeout(time.Now().Add(time.Duration(timeout * float64(time.Second))))
-		cmd.SetDefaultTimeoutOutput(resp.Array{Size: -1})
 	}
 
 	ok := h.resolveBlockLpop(key, cmd)
@@ -955,15 +955,21 @@ func (h *handlers) handleWait(cmd *gedis_types.Command) error {
 		return err
 	}
 
-	if timeout >= 0 {
-		cmd.SetTimeout(time.Now().Add(time.Duration(timeout * float64(time.Second))))
-		cmd.SetDefaultTimeoutOutput(resp.Array{Size: -1})
+	entry := &waitEntry{
+		cmd:      cmd,
+		count:    replicaCount,
+		curCount: 0,
 	}
 
-	h.waits = append(h.waits, waitEntry{
-		cmd:   cmd,
-		count: replicaCount,
-	})
+	if timeout >= 0 {
+		deadline := time.Now().Add(time.Duration(timeout * float64(time.Second)))
+		cmd.SetTimeout(deadline)
+		cmd.SetTimeoutProducer(func() any {
+			return entry.curCount
+		})
+	}
+
+	h.waits = append(h.waits, entry)
 	return nil
 }
 
@@ -972,24 +978,25 @@ func (h *handlers) countWaits() int {
 }
 
 func (h *handlers) resolveWaits(inSync int) {
-
-	for i := 0; i < len(h.waits); {
+	remv := make([]int, 0, len(h.waits))
+	for i := 0; i < len(h.waits); i += 1 {
 		entry := h.waits[i]
+		entry.curCount = inSync
 
 		if entry.cmd.HasTimedOut() {
-			entry.cmd.SetDone()
-			entry.cmd.WriteAny(inSync)
-			h.waits = append(h.waits[:i], h.waits[i+1:]...)
+			remv = append(remv, i)
 			continue
 		}
 
-		if inSync < entry.count {
-			i += 1
-			continue
+		if entry.curCount >= entry.count {
+			defer entry.cmd.SetDone()
+			entry.cmd.WriteAny(entry.curCount)
+			remv = append(remv, i)
 		}
+	}
 
-		entry.cmd.SetDone()
-		entry.cmd.WriteAny(inSync)
-		h.waits = append(h.waits[:i], h.waits[i+1:]...)
+	for j := len(remv) - 1; j >= 0; j -= 1 {
+		idx := remv[j]
+		h.waits = append(h.waits[:idx], h.waits[idx+1:]...)
 	}
 }

@@ -1,7 +1,6 @@
 package resp_client
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"log"
@@ -14,7 +13,6 @@ type Client struct {
 	host string
 	port int
 	conn net.Conn
-	*bufio.Reader
 }
 
 func NewClient(host string, port int) (*Client, error) {
@@ -34,17 +32,15 @@ func (c *Client) connect() error {
 		return err
 	}
 	c.conn = conn
-	c.Reader = bufio.NewReader(conn)
 	return nil
 }
 
 func NewClientFromConn(conn net.Conn) *Client {
 	addr := conn.RemoteAddr().(*net.TCPAddr)
 	return &Client{
-		host:   addr.IP.String(),
-		port:   addr.Port,
-		conn:   conn,
-		Reader: bufio.NewReader(conn),
+		host: addr.IP.String(),
+		port: addr.Port,
+		conn: conn,
 	}
 }
 
@@ -63,7 +59,7 @@ func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, erro
 	} else {
 		total += int(n)
 	}
-	out, err := resp.ParseValue(c)
+	out, err := resp.ParseValue(c.conn)
 	if err != nil {
 		return nil, 0, fmt.Errorf("invalid output: %w", err)
 	}
