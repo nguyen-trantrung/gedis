@@ -149,10 +149,12 @@ func (h *handlers) handlePing(cmd *gedis_types.Command) error {
 		return nil
 	}
 	if h.shouldWriteOutput(cmd) {
-		cmd.WriteAny("PONG")
-	} else if cmd.IsSubMode() {
-		arr := resp.Array{Size: 2, Items: []any{"PONG", ""}}
-		cmd.WriteAny(arr)
+		if cmd.IsSubMode() {
+			arr := resp.Array{Size: 2, Items: []any{"pong", ""}}
+			cmd.WriteAny(arr)
+		} else {
+			cmd.WriteAny("PONG")
+		}
 	}
 	return nil
 }
