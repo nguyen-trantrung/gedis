@@ -113,6 +113,24 @@ func (i *Instance) loop(ctx context.Context) {
 		}
 	}
 
+	if i.isMaster() {
+		pendingWaits := 0
+
+		for _, h := range i.handlers {
+			pendingWaits += h.countWaits()
+		}
+
+		if pendingWaits > 0 {
+			offsets, err := i.master.AskOffsets(ctx)
+			if err != nil {
+				log.Printf("failed to ask offsets from slaves: %v", err)
+			}
+			for _, h := range i.handlers {
+				h.resolveWaits(len(offsets))
+			}
+		}
+	}
+
 	cmds := i.cmdBuf.ReadBatch(10)
 	for _, cmd := range cmds {
 		log.Printf("command received, type '%s', addr=%s", cmd.Cmd.Cmd, cmd.Addr)

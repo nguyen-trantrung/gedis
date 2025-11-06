@@ -14,6 +14,11 @@ import (
 	"github.com/ttn-nguyen42/gedis/resp"
 )
 
+type waitEntry struct {
+	cmd   *gedis_types.Command
+	count int
+}
+
 var ErrInvalidArguments error = fmt.Errorf("invalid arguments")
 
 type handler func(cmd *gedis_types.Command) error
@@ -30,6 +35,7 @@ type handlers struct {
 	db      *database
 	info    *info.Info
 	hmap    map[string]handlerEntry
+	waits   []waitEntry
 }
 
 func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl.Slave) *handlers {
@@ -40,6 +46,7 @@ func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl
 		isSlave: slave != nil,
 		master:  master,
 		slave:   slave,
+		waits:   make([]waitEntry, 0),
 	}
 	hdl.init()
 	return hdl
@@ -67,6 +74,7 @@ func (h *handlers) init() {
 		"info":     {h.handleInfo, false},
 		"replconf": {h.handleReplConf, false},
 		"psync":    {h.handlePsync, false},
+		"wait":     {h.handleWait, false},
 	}
 }
 
@@ -921,4 +929,67 @@ func (h *handlers) resolveInitRdbSync(state *gedis_types.ConnState) {
 		log.Printf("rdb sync failed, addr=%s, err=%s", addr, err)
 	}
 	log.Printf("master sync RDB to replica, addr=%s", addr)
+}
+
+func (h *handlers) handleWait(cmd *gedis_types.Command) error {
+	if h.checkInTx(cmd) {
+		return fmt.Errorf("WAIT cannot be in a transaction")
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	if h.isSlave {
+		return fmt.Errorf("%w: WAIT invalid for replica", ErrInvalidArguments)
+	}
+
+	replicaCount, err := parseInt(args[0])
+	if err != nil {
+		return err
+	}
+
+	timeout, err := parseFloat(args[1])
+	if err != nil {
+		return err
+	}
+
+	if timeout >= 0 {
+		cmd.SetTimeout(time.Now().Add(time.Duration(timeout * float64(time.Second))))
+		cmd.SetDefaultTimeoutOutput(resp.Array{Size: -1})
+	}
+
+	h.waits = append(h.waits, waitEntry{
+		cmd:   cmd,
+		count: replicaCount,
+	})
+	return nil
+}
+
+func (h *handlers) countWaits() int {
+	return len(h.waits)
+}
+
+func (h *handlers) resolveWaits(inSync int) {
+
+	for i := 0; i < len(h.waits); {
+		entry := h.waits[i]
+
+		if entry.cmd.HasTimedOut() {
+			entry.cmd.SetDone()
+			entry.cmd.WriteAny(inSync)
+			h.waits = append(h.waits[:i], h.waits[i+1:]...)
+			continue
+		}
+
+		if inSync < entry.count {
+			i += 1
+			continue
+		}
+
+		entry.cmd.SetDone()
+		entry.cmd.WriteAny(inSync)
+		h.waits = append(h.waits[:i], h.waits[i+1:]...)
+	}
 }
