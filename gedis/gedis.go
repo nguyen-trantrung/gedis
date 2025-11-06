@@ -13,15 +13,16 @@ import (
 )
 
 type Instance struct {
-	info              *info.Info
-	cmdBuf            *data.CircularBuffer[*gedis_types.Command]
-	stop              chan struct{}
-	dbs               []*database
-	handlers          map[int]*handlers
-	round             int
-	options           *Options
-	slave             *repl.Slave
-	master            *repl.Master
+	info     *info.Info
+	cmdBuf   *data.CircularBuffer[*gedis_types.Command]
+	stop     chan struct{}
+	dbs      []*database
+	handlers map[int]*handlers
+	round    int
+	options  *Options
+	ps       *pubsub
+	slave    *repl.Slave
+	master   *repl.Master
 }
 
 func NewInstance(cap int, opts ...Option) (*Instance, error) {
@@ -31,6 +32,7 @@ func NewInstance(cap int, opts ...Option) (*Instance, error) {
 		dbs:      make([]*database, 16),
 		handlers: make(map[int]*handlers, 16),
 		round:    0,
+		ps:       newPubsub(),
 		options: &Options{
 			Role: "master",
 		},
@@ -146,6 +148,8 @@ func (i *Instance) loop(ctx context.Context) {
 		i.processCmd(ctx, cmd)
 	}
 
+	i.ps.resolveSubs()
+
 	if len(cmds) == 0 {
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -158,7 +162,7 @@ func (i *Instance) initDb(idx int) error {
 	}
 	if i.dbs[idx] == nil {
 		i.dbs[idx] = newDb(idx)
-		i.handlers[idx] = newHandlers(i.dbs[idx], i.info, i.master, i.slave)
+		i.handlers[idx] = newHandlers(i.dbs[idx], i.info, i.ps, i.master, i.slave)
 	}
 	return nil
 }

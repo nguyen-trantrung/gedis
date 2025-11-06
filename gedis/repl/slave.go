@@ -3,7 +3,6 @@ package repl
 import (
 	"context"
 	"fmt"
-	"io"
 	"log"
 	"strconv"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	gedis_types "github.com/ttn-nguyen42/gedis/gedis/types"
 	"github.com/ttn-nguyen42/gedis/resp"
 	resp_client "github.com/ttn-nguyen42/gedis/resp/client"
+	"github.com/ttn-nguyen42/gedis/util"
 )
 
 type hostPort struct {
@@ -184,8 +184,8 @@ func (s *Slave) beginHandleSyncs(ctx context.Context) error {
 
 			cmd, err := resp.ParseCmd(s.client.Conn())
 			if err != nil {
-				if err == io.EOF {
-					log.Printf("master closed connection, stopping") //TODO: handle reconnection
+				if util.IsDisconnected(err) {
+					log.Printf("master connection closed, addr=%s", s.client.Conn().RemoteAddr())
 					return
 				}
 

@@ -5,19 +5,16 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"io"
 	"log"
-	"math/rand"
 	"net"
 	"strconv"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/ttn-nguyen42/gedis/data"
 	"github.com/ttn-nguyen42/gedis/gedis/info"
 	"github.com/ttn-nguyen42/gedis/resp"
 	resp_client "github.com/ttn-nguyen42/gedis/resp/client"
+	"github.com/ttn-nguyen42/gedis/util"
 )
 
 const EMPTY_RDB_BASE64 = "UkVESVMwMDEx+glyZWRpcy12ZXIFNy4yLjD6CnJlZGlzLWJpdHPAQPoFY3RpbWXCbQi8ZfoIdXNlZC1tZW3CsMQQAPoIYW9mLWJhc2XAAP/wbjv+wP9aog=="
@@ -46,25 +43,19 @@ func (s *slaveData) completeHandshake() bool {
 	return s.isReady
 }
 
-var seededRand = newSeededRand()
-
-func newSeededRand() *rand.Rand {
-	return rand.New(rand.NewSource(time.Now().UnixNano()))
-}
-
 type Master struct {
-	mu             sync.RWMutex
-	replId         string
-	replOffset     int64
-	info           *info.Info
-	slaves         map[string]*slaveData
-	buf            *data.CircularBuffer[resp.Command]
-	isDirty        bool
+	mu         sync.RWMutex
+	replId     string
+	replOffset int64
+	info       *info.Info
+	slaves     map[string]*slaveData
+	buf        *data.CircularBuffer[resp.Command]
+	isDirty    bool
 }
 
 func NewMaster(info *info.Info) *Master {
 	m := &Master{
-		replId:     randomId(40),
+		replId:     util.RandomId(40),
 		replOffset: 0,
 		info:       info,
 		slaves:     make(map[string]*slaveData),
@@ -73,15 +64,6 @@ func NewMaster(info *info.Info) *Master {
 	}
 	m.syncInfo()
 	return m
-}
-
-func randomId(l int) string {
-	const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	b := make([]byte, l)
-	for i := range b {
-		b[i] = letters[seededRand.Intn(len(letters))]
-	}
-	return string(b)
 }
 
 func (m *Master) syncInfo() {
@@ -252,25 +234,6 @@ func (m *Master) InitialRdbSync() error {
 	return nil
 }
 
-func (m *Master) isDisconnectedErr(err error, sd *slaveData) bool {
-	if errors.Is(err, io.EOF) {
-		log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
-		return true
-	}
-	if errors.Is(err, io.ErrClosedPipe) {
-		log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
-		return true
-	}
-	var op *net.OpError
-	if errors.As(err, &op) {
-		if strings.Contains(op.Error(), "closed") {
-			log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
-			return true
-		}
-	}
-	return false
-}
-
 func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -292,8 +255,9 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 		// }
 		_, err := sd.client.SendForget(ctx, cmd)
 		if err != nil {
-			if m.isDisconnectedErr(err, sd) {
+			if util.IsDisconnected(err) {
 				remv = append(remv, sk)
+				log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
 				continue
 			}
 			return fmt.Errorf("failed to send repl command to slave, addr=%s: %w", sd.client.RemoteAddr(), err)
@@ -358,8 +322,9 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 			var offset int
 			offset, written, err = m.askOffset(ctx, sd)
 			if err != nil {
-				if m.isDisconnectedErr(err, sd) {
+				if util.IsDisconnected(err) {
 					rm = append(rm, sk)
+					log.Printf("slave connection closed, addr=%s", sd.client.RemoteAddr())
 					continue
 				}
 				if errors.Is(err, context.DeadlineExceeded) {

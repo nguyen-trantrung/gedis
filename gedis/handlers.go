@@ -12,6 +12,7 @@ import (
 	"github.com/ttn-nguyen42/gedis/gedis/repl"
 	gedis_types "github.com/ttn-nguyen42/gedis/gedis/types"
 	"github.com/ttn-nguyen42/gedis/resp"
+	"github.com/ttn-nguyen42/gedis/util"
 )
 
 type waitEntry struct {
@@ -36,13 +37,15 @@ type handlers struct {
 	info    *info.Info
 	hmap    map[string]handlerEntry
 	waits   []*waitEntry
+	pubsub  *pubsub
 }
 
-func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl.Slave) *handlers {
+func newHandlers(db *database, info *info.Info, pubsub *pubsub, master *repl.Master, slave *repl.Slave) *handlers {
 	hdl := &handlers{
 		db:      db,
 		info:    info,
 		hmap:    nil,
+		pubsub:  pubsub,
 		isSlave: slave != nil,
 		master:  master,
 		slave:   slave,
@@ -54,27 +57,31 @@ func newHandlers(db *database, info *info.Info, master *repl.Master, slave *repl
 
 func (h *handlers) init() {
 	h.hmap = map[string]handlerEntry{
-		"ping":     {h.handlePing, false},
-		"echo":     {h.handleEcho, false},
-		"select":   {h.handleSelect, false},
-		"set":      {h.handleSet, true},
-		"get":      {h.handleGet, false},
-		"rpush":    {h.handleRPush, true},
-		"lpush":    {h.handleLPush, true},
-		"lpop":     {h.handleLPop, true},
-		"rpop":     {h.handleRPop, true},
-		"lrange":   {h.handleLRange, false},
-		"llen":     {h.handleLLen, false},
-		"lindex":   {h.handleLIndex, false},
-		"blpop":    {h.handleBlockLpop, false},
-		"incr":     {h.handleIncr, true},
-		"multi":    {h.handleMulti, true},
-		"exec":     {h.handleExec, true},
-		"discard":  {h.handleDiscard, true},
-		"info":     {h.handleInfo, false},
-		"replconf": {h.handleReplConf, false},
-		"psync":    {h.handlePsync, false},
-		"wait":     {h.handleWait, false},
+		"ping":        {h.handlePing, false},
+		"echo":        {h.handleEcho, false},
+		"select":      {h.handleSelect, false},
+		"set":         {h.handleSet, true},
+		"get":         {h.handleGet, false},
+		"rpush":       {h.handleRPush, true},
+		"lpush":       {h.handleLPush, true},
+		"lpop":        {h.handleLPop, true},
+		"rpop":        {h.handleRPop, true},
+		"lrange":      {h.handleLRange, false},
+		"llen":        {h.handleLLen, false},
+		"lindex":      {h.handleLIndex, false},
+		"blpop":       {h.handleBlockLpop, false},
+		"incr":        {h.handleIncr, true},
+		"multi":       {h.handleMulti, true},
+		"exec":        {h.handleExec, true},
+		"discard":     {h.handleDiscard, true},
+		"info":        {h.handleInfo, false},
+		"replconf":    {h.handleReplConf, false},
+		"psync":       {h.handlePsync, false},
+		"wait":        {h.handleWait, false},
+		"subscribe":   {h.handleSubscribe, false},
+		"unsubscribe": {h.handleUnsubscribe, false},
+		"publish":     {h.handlePublish, true},
+		"quit":        {h.handleQuit, false},
 	}
 }
 
@@ -129,6 +136,10 @@ func parseFloat(arg any) (float64, error) {
 
 func (h *handlers) route(cmd *gedis_types.Command) (handler, bool, error) {
 	r := cmd.Cmd
+	// Enforce subscription mode command whitelist.
+	if err := h.checkSubsMode(cmd); err != nil {
+		return nil, false, err
+	}
 	entry, found := h.hmap[strings.ToLower(r.Cmd)]
 	if !found {
 		return nil, false, fmt.Errorf("%w: invalid command '%s'", resp.ErrProtocolError, r.Cmd)
@@ -148,6 +159,9 @@ func (h *handlers) handlePing(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleEcho(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	defer cmd.SetDone()
 	if h.checkInTx(cmd) {
 		return nil
@@ -159,6 +173,9 @@ func (h *handlers) handleEcho(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleSelect(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	if len(cmd.Cmd.Args) < 1 {
 		return fmt.Errorf("%w: missing database number", ErrInvalidArguments)
 	}
@@ -207,6 +224,9 @@ func checkExpiry(args []any) (int, bool, error) {
 }
 
 func (h *handlers) handleSet(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -238,6 +258,9 @@ func (h *handlers) handleSet(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleGet(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -260,6 +283,9 @@ func (h *handlers) handleGet(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleRPush(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -303,6 +329,9 @@ func (h *handlers) handleRPush(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleLPush(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -346,6 +375,9 @@ func (h *handlers) handleLPush(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleLPop(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -417,6 +449,9 @@ func (h *handlers) handleLPop(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleRPop(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -487,7 +522,12 @@ func (h *handlers) handleRPop(cmd *gedis_types.Command) error {
 	return nil
 }
 
+// (handleQuit removed due to incomplete implementation and not part of the allowed command set.)
+
 func (h *handlers) handleLRange(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 3 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -500,29 +540,28 @@ func (h *handlers) handleLRange(cmd *gedis_types.Command) error {
 	if err != nil {
 		return err
 	}
-
 	start, err := parseInt(args[1])
 	if err != nil {
 		return err
 	}
-
 	stop, err := parseInt(args[2])
 	if err != nil {
 		return err
 	}
-
 	list, exists := h.db.GetList(key)
 	if !exists {
 		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
 		return nil
 	}
-
 	items := list.LeftRange(start, stop)
 	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
 	return nil
 }
 
 func (h *handlers) handleLLen(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 1 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -545,6 +584,9 @@ func (h *handlers) handleLLen(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleLIndex(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -579,6 +621,9 @@ func (h *handlers) handleLIndex(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleBlockLpop(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
@@ -630,6 +675,9 @@ func (h *handlers) resolveBlockLpop(key string, cmd *gedis_types.Command) (ok bo
 }
 
 func (h *handlers) handleIncr(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	args := cmd.Cmd.Args
 	if len(args) != 1 {
 		return fmt.Errorf("%w: requires exactly 1 argument", ErrInvalidArguments)
@@ -677,6 +725,9 @@ func (h *handlers) handleIncr(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleMulti(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 
 	if err := h.checkSlaveWrite(cmd); err != nil {
 		return err
@@ -697,6 +748,9 @@ func (h *handlers) handleMulti(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleExec(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 
 	if err := h.checkSlaveWrite(cmd); err != nil {
 		return err
@@ -755,6 +809,21 @@ func (h *handlers) shouldWriteOutput(cmd *gedis_types.Command) bool {
 	return true
 }
 
+func (h *handlers) checkSubsMode(cmd *gedis_types.Command) error {
+	if !cmd.ConnState.IsSubscription() {
+		return nil
+	}
+	allowed := map[string]struct{}{
+		"subscribe":   {},
+		"unsubscribe": {},
+		"ping":        {},
+	}
+	if _, ok := allowed[strings.ToLower(cmd.Cmd.Cmd)]; !ok {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
+	return nil
+}
+
 func (h *handlers) checkSlaveWrite(cmd *gedis_types.Command) error {
 	if h.isSlave && !cmd.IsRepl() {
 		return fmt.Errorf("READONLY You can't write against a read only replica")
@@ -763,6 +832,9 @@ func (h *handlers) checkSlaveWrite(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleDiscard(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 
 	if err := h.checkSlaveWrite(cmd); err != nil {
 		return err
@@ -786,6 +858,9 @@ func (h *handlers) handleDiscard(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleInfo(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	defer cmd.SetDone()
 	if h.checkInTx(cmd) {
 		return fmt.Errorf("INFO not available during transaction")
@@ -815,6 +890,9 @@ func (h *handlers) handleInfo(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	defer cmd.SetDone()
 
 	if h.checkInTx(cmd) {
@@ -852,10 +930,6 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 
 		cmd.WriteAny("OK")
 	case "getack":
-		// if !cmd.IsRepl() {
-		// 	return fmt.Errorf("%w: REPLCONF only valid for replication connections", ErrInvalidArguments)
-		// }
-
 		arg := args[1]
 		ackOffset := 0
 
@@ -918,6 +992,9 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	defer cmd.SetDone()
 
 	if h.checkInTx(cmd) {
@@ -952,6 +1029,9 @@ func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
 }
 
 func (h *handlers) handleWait(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
 	if h.checkInTx(cmd) {
 		return fmt.Errorf("WAIT cannot be in a transaction")
 	}
@@ -1017,4 +1097,138 @@ func (h *handlers) resolveWaits(inSync int) {
 		idx := remv[j]
 		h.waits = append(h.waits[:idx], h.waits[idx+1:]...)
 	}
+}
+
+func (h *handlers) handleSubscribe(cmd *gedis_types.Command) error {
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return fmt.Errorf("SUBSCRIBE not allowed in transaction")
+	}
+
+	var subId string
+	if !cmd.ConnState.IsSubscription() {
+		subId = util.RandomId(32)
+		cmd.ConnState.UpgradeToSubscription(subId)
+	} else {
+		subId = cmd.ConnState.SubId()
+	}
+
+	for _, arg := range args {
+		channel, err := parseBulkStr(arg)
+		if err != nil {
+			return err
+		}
+
+		h.pubsub.subscribe(subId, channel, cmd.ConnState.Conn)
+
+		cmd.WriteAny(resp.Array{
+			Size: 3,
+			Items: []any{
+				"subscribe",
+				channel,
+				h.pubsub.countSubs(subId),
+			},
+		})
+		log.Printf("new subscriber added, channel=%s, addr=%s", channel, cmd.ConnState.Conn.RemoteAddr())
+	}
+	return nil
+}
+
+func (h *handlers) handleUnsubscribe(cmd *gedis_types.Command) error {
+	args := cmd.Cmd.Args
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return fmt.Errorf("UNSUBSCRIBE not allowed in transaction")
+	}
+
+	if !cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("UNSUBSCRIBE not allowed outside subscribe mode")
+	}
+
+	subId := cmd.ConnState.SubId()
+
+	respArgs := make([]string, 0)
+
+	if len(args) == 0 {
+		unsubs := h.pubsub.unsubscribeAll(subId)
+		respArgs = append(respArgs, unsubs...)
+	}
+
+	for _, arg := range args {
+		channel, err := parseBulkStr(arg)
+		if err != nil {
+			return err
+		}
+		h.pubsub.unsubscribe(subId, channel)
+		respArgs = append(respArgs, channel)
+	}
+
+	currSubCount := h.pubsub.countSubs(subId)
+
+	arr := resp.Array{
+		Size:  len(respArgs) + 2,
+		Items: nil,
+	}
+	arr.Items = append(arr.Items, "unsubscribe")
+	for _, ch := range respArgs {
+		arr.Items = append(arr.Items, ch)
+	}
+	arr.Items = append(arr.Items, currSubCount)
+
+	cmd.WriteAny(arr)
+	return nil
+}
+
+func (h *handlers) handlePublish(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return fmt.Errorf("PUBLISH not allowed in transaction")
+	}
+
+	channel, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	message := args[1]
+
+	sentCount := h.pubsub.publish(channel, message)
+
+	cmd.WriteAny(sentCount)
+	return nil
+}
+
+func (h *handlers) handleQuit(cmd *gedis_types.Command) error {
+	if cmd.ConnState.IsSubscription() {
+		return fmt.Errorf("ERR only (UN)SUBSCRIBE / PING allowed in this context")
+	}
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return fmt.Errorf("QUIT not allowed in transaction")
+	}
+
+	if cmd.ConnState.IsReplication() {
+		return fmt.Errorf("QUIT not allowed in replication")
+	}
+
+	cmd.WriteAny("OK")
+	if cmd.ConnState.IsSubscription() {
+		cmd.ConnState.QuitSubscription()
+	}
+	return nil
 }

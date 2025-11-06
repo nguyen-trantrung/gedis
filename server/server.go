@@ -163,14 +163,7 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 			state.mu.Unlock()
 
 			if err := s.core.Submit(ctx, []*gedis_types.Command{rCmd}); err != nil {
-				var netOpErr *net.OpError
-				if errors.Is(err, context.DeadlineExceeded) {
-					log.Printf("context canceled, stop submitting commands")
-				} else if !errors.As(err, &netOpErr) {
-					log.Printf("submit err: %+v", err)
-				}
-				cancel()
-				return
+				log.Printf("failed to submit command to core, err=%s, addr=%s", err, conn.RemoteAddr())
 			}
 		}
 	}()
