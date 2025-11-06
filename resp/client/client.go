@@ -74,7 +74,7 @@ func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, erro
 
 	dl := time.Now().Add(100 * time.Millisecond)
 	c.conn.SetReadDeadline(dl)
-	defer c.conn.SetReadDeadline(time.Time{})
+	//defer c.conn.SetReadDeadline(time.Time{})
 
 	if n, err := arr.WriteTo(c.conn); err != nil {
 		if isTimeoutErr(err) {
