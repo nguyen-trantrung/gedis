@@ -277,10 +277,10 @@ func (m *Master) askOffset(ctx context.Context, sd *slaveData) (int, error) {
 		return -1, fmt.Errorf("failed to send REPLCONF GETACK to slave: %w", err)
 	}
 	arr, ok := r.(resp.Array)
-	if !ok || len(arr.Items) != 2 {
+	if !ok || len(arr.Items) != 3 {
 		return -1, fmt.Errorf("invalid REPLCONF GETACK response from slave: %+v", r)
 	}
-	offsetStr, ok := arr.Items[1].(resp.BulkStr)
+	offsetStr, ok := arr.Items[len(arr.Items)-1].(resp.BulkStr)
 	if !ok {
 		return -1, fmt.Errorf("invalid REPLCONF GETACK offset from slave: %+v", arr.Items[1])
 	}

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"math/big"
 	"net"
 	"strings"
@@ -12,8 +11,6 @@ import (
 
 var ErrInvalidToken = fmt.Errorf("invalid token")
 var ErrProtocolError = fmt.Errorf("protocol error")
-
-var cs int = 0
 
 // ParseCmd parses a single command from the byte stream.
 // It stops right after a valid command is found, not until end of stream.
@@ -94,12 +91,8 @@ func (p *parser) parse() (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		cs += 1
-		log.Println("array", cs)
 		return arr, nil
 	case TokenTypeSimpleString:
-		cs += 1
-		log.Println("simple string", cs)
 		return curr.Value.(string), nil
 	case TokenTypeSimpleError:
 		return Err{Value: curr.Value.(string), Size: curr.Size}, nil

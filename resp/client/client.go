@@ -54,6 +54,7 @@ func (c *Client) Close() error {
 func (c *Client) SendSync(ctx context.Context, cmd resp.Command) (any, int, error) {
 	arr := cmd.Array()
 	total := 0
+
 	if n, err := arr.WriteTo(c.conn); err != nil {
 		return nil, 0, err
 	} else {

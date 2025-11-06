@@ -843,6 +843,7 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 			return fmt.Errorf("%w: REPLCONF only valid on a master", ErrInvalidArguments)
 		}
 
+		// This is the first step - no dependencies
 		portnum, err := parseInt(args[1])
 		if err != nil {
 			return fmt.Errorf("%w: invalid port number: %w", ErrInvalidArguments, err)
@@ -851,7 +852,11 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 		if err != nil {
 			return err
 		}
+
+		// Mark this handshake step as completed
+		state.AddHandshakeStep(gedis_types.HandshakeListeningPort)
 		cmd.WriteAny("OK")
+
 	case "getack":
 		if !cmd.IsRepl() {
 			return fmt.Errorf("%w: REPLCONF only valid for replication connections", ErrInvalidArguments)
@@ -875,11 +880,23 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 
 		_ = ackOffset
 
-		res := resp.Command{Cmd: "REPLCONF", Args: []any{"ACK", fmt.Sprintf("%d", h.slave.ReplOffset())}}
+		offsetStr := fmt.Sprintf("%d", h.slave.ReplOffset())
+		res := resp.Command{
+			Cmd: "REPLCONF",
+			Args: []any{
+				resp.BulkStr{Value: "ACK", Size: 3},
+				resp.BulkStr{Value: offsetStr, Size: len(offsetStr)},
+			},
+		}
 		cmd.WriteAny(res.Array())
+
 	case "capa":
 		if h.isSlave {
 			return fmt.Errorf("%w: REPLCONF only valid on a master", ErrInvalidArguments)
+		}
+
+		if !state.HasHandshakeStep(gedis_types.HandshakeListeningPort) {
+			return fmt.Errorf("%w: REPLCONF capa must come after listening-port", ErrInvalidArguments)
 		}
 
 		proto, err := parseStr(args[1])
@@ -890,7 +907,10 @@ func (h *handlers) handleReplConf(cmd *gedis_types.Command) error {
 		if !exists {
 			return fmt.Errorf("%w: slave not registered yet", ErrInvalidArguments)
 		}
+
+		state.AddHandshakeStep(gedis_types.HandshakeCapa)
 		cmd.WriteAny("OK")
+
 	default:
 		return fmt.Errorf("%w: unknown REPLCONF subcommand '%s'", ErrInvalidArguments, subcmd)
 	}
@@ -906,11 +926,18 @@ func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
 	if h.isSlave {
 		return fmt.Errorf("PSYNC invalid for slave")
 	}
+
+	state := cmd.ConnState
+
+	if !state.HasHandshakeStep(gedis_types.HandshakeCapa) {
+		return fmt.Errorf("%w: PSYNC must come after REPLCONF capa", ErrInvalidArguments)
+	}
+
 	str := fmt.Sprintf("FULLRESYNC %s %d", h.master.ReplId(), h.master.ReplOffset())
 	sarr := resp.BulkStr{Size: len(str), Value: str}
 	cmd.WriteAny(sarr)
 
-	state := cmd.ConnState
+	state.AddHandshakeStep(gedis_types.HandshakePsync)
 
 	cmd.SetDefer(func() {
 		_, found := h.master.GetSlave(state.Conn.RemoteAddr().String())
@@ -924,11 +951,27 @@ func (h *handlers) handlePsync(cmd *gedis_types.Command) error {
 
 func (h *handlers) resolveInitRdbSync(state *gedis_types.ConnState) {
 	addr := state.Conn.RemoteAddr().String()
+
+	if !state.HasHandshakeStep(gedis_types.HandshakePsync) {
+		log.Printf("rdb sync attempted before PSYNC completed, addr=%s", addr)
+		state.RsyncFailed()
+		return
+	}
+
 	err := h.master.InitialRdbSync(addr)
 	if err != nil {
 		log.Printf("rdb sync failed, addr=%s, err=%s", addr, err)
+		state.RsyncFailed()
+		return
 	}
 	log.Printf("master sync RDB to replica, addr=%s", addr)
+
+	state.RsyncSuccess()
+
+	if state.HandshakeComplete() {
+		log.Printf("handshake complete, upgrading connection to replication mode, addr=%s", addr)
+		state.UpgradeToReplication()
+	}
 }
 
 func (h *handlers) handleWait(cmd *gedis_types.Command) error {

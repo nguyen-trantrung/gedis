@@ -139,8 +139,14 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 			default:
 			}
 
-			conn.SetDeadline(time.Now().Add(time.Hour))
 			cmd, err := resp.ParseCmd(bufRead)
+
+			if state.connState.IsReplication() {
+				log.Printf("connection marked as replication, stopping read loop, addr=%s", conn.RemoteAddr())
+				conn.SetReadDeadline(time.Time{}) // reset deadline
+				return
+			}
+
 			brk, cont := s.handleProtoError(err, conn)
 			if !brk {
 				cancel()
@@ -176,6 +182,12 @@ func (s *Server) handleConn(baseCtx context.Context, conn net.Conn) {
 			case <-ctx.Done():
 				return
 			default:
+			}
+
+			if state.connState.IsReplication() {
+				log.Printf("connection marked as replication, stopping write loop, addr=%s", conn.RemoteAddr())
+				conn.SetReadDeadline(time.Now()) // a small trick to force read to unblock
+				return
 			}
 
 			state.mu.Lock()
