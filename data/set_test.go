@@ -41,12 +41,12 @@ func TestSortedSet_InsertAndLen(t *testing.T) {
 		t.Fatalf("length should remain 2 after score update, got %d", s.Len())
 	}
 
-	node, ok := s.Search("a")
+	score, ok := s.Score("a")
 	if !ok {
 		t.Fatalf("expected to find member 'a'")
 	}
-	if node.Score != 2.5 {
-		t.Fatalf("expected updated score 2.5, got %f", node.Score)
+	if score != 2.5 {
+		t.Fatalf("expected updated score 2.5, got %f", score)
 	}
 }
 
@@ -85,7 +85,7 @@ func TestSortedSet_Remove(t *testing.T) {
 	if s.Len() != 2 {
 		t.Fatalf("expected length 2 after removal, got %d", s.Len())
 	}
-	if _, ok := s.Search("y"); ok {
+	if _, ok := s.Score("y"); ok {
 		t.Fatalf("did not expect to find removed member y")
 	}
 
@@ -104,11 +104,11 @@ func TestSortedSet_Remove(t *testing.T) {
 
 func TestSortedSet_SearchNotFound(t *testing.T) {
 	s := data.NewSortedSet()
-	if _, ok := s.Search("missing"); ok {
+	if _, ok := s.Score("missing"); ok {
 		t.Fatalf("expected search on empty set to fail")
 	}
 	s.Insert("present", 1)
-	if _, ok := s.Search("other"); ok {
+	if _, ok := s.Score("other"); ok {
 		t.Fatalf("expected other to be absent")
 	}
 }

@@ -200,14 +200,29 @@ func (s *SortedSet) getRange(lidx int, ridx int) []Node {
 	return result
 }
 
-func (s *SortedSet) search(value string) (Node, bool) {
+func (s *SortedSet) Score(value string) (float64, bool) {
 	score, exists := s.scores[value]
-	if !exists {
-		return Node{}, false
-	}
-	return Node{score, value}, true
+	return score, exists
 }
 
-func (s *SortedSet) Search(value string) (Node, bool) {
-	return s.search(value)
+func (s *SortedSet) Rank(value string) (int, bool) {
+	score, exists := s.scores[value]
+	if !exists {
+		return -1, false
+	}
+	return s.rank(value, score), true
+}
+
+func (s *SortedSet) rank(value string, score float64) int {
+	col := s.lowerBound(score, value)
+	if s.compare(col, &column{nil, value, score}) != 0 {
+		panic("rank called on non-existing member")
+	}
+	rank := 0
+	for iter := s.head.cells[0].next; iter != col; iter = iter.cells[0].next {
+		if iter.score == score {
+			rank += 1
+		}
+	}
+	return rank
 }

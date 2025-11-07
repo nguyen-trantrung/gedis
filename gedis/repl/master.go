@@ -313,7 +313,6 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 
 	var err error
 
-	var written int
 	for sk, sd := range m.slaves {
 		if !sd.completeHandshake() {
 			continue
@@ -324,7 +323,7 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 		}
 
 		var offset int
-		offset, written, err = m.askOffset(ctx, sd)
+		offset, _, err = m.askOffset(ctx, sd)
 		if err != nil {
 			if util.IsDisconnected(err) {
 				rm = append(rm, sk)
@@ -344,7 +343,6 @@ func (m *Master) AskOffsets(ctx context.Context) error {
 		}
 	}
 
-	m.replOffset += int64(written)
 	if updateToDate == len(m.slaves) {
 		m.isDirty = false
 	}
@@ -403,7 +401,7 @@ func (s *Master) InsyncSlaveCount() int {
 			continue
 		}
 		if int64(sd.lastOffset) < s.replOffset {
-			log.Printf("slave %d out of sync: last=%d master=%d",sd.theirPort, sd.lastOffset, s.replOffset)
+			log.Printf("slave %d out of sync: last=%d master=%d", sd.theirPort, sd.lastOffset, s.replOffset)
 			continue
 		}
 		total += 1

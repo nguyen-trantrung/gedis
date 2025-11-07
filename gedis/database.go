@@ -15,6 +15,7 @@ type database struct {
 	num   int
 	hm    *data.HashMap
 	list  map[any]*data.LinkedList
+	ss    map[any]*data.SortedSet
 	block *blockingOps
 }
 
@@ -23,6 +24,7 @@ func newDb(n int) *database {
 		num:  n,
 		hm:   data.NewHashMap(),
 		list: make(map[any]*data.LinkedList),
+		ss:   make(map[any]*data.SortedSet),
 		block: &blockingOps{
 			blockLpop: make(map[any][]*gedis_types.Command),
 		},
@@ -58,6 +60,28 @@ func (d *database) DeleteList(key any) bool {
 	_, exists := d.list[key]
 	if exists {
 		delete(d.list, key)
+	}
+	return exists
+}
+
+func (d *database) GetOrCreateSortedSet(key any) *data.SortedSet {
+	ss, exists := d.ss[key]
+	if !exists {
+		ss = data.NewSortedSet()
+		d.ss[key] = ss
+	}
+	return ss
+}
+
+func (d *database) GetSortedSet(key any) (*data.SortedSet, bool) {
+	ss, exists := d.ss[key]
+	return ss, exists
+}
+
+func (d *database) DeleteSortedSet(key any) bool {
+	_, exists := d.ss[key]
+	if exists {
+		delete(d.ss, key)
 	}
 	return exists
 }

@@ -82,6 +82,12 @@ func (h *handlers) init() {
 		"unsubscribe": {h.handleUnsubscribe, false},
 		"publish":     {h.handlePublish, true},
 		"quit":        {h.handleQuit, false},
+		"zadd":        {h.handleZadd, true},
+		"zrem":        {h.handleZrem, true},
+		"zscore":      {h.handleZscore, false},
+		"zcard":       {h.handleZcard, false},
+		"zrange":      {h.handleZrange, false},
+		"zrank":       {h.handleZrank, false},
 	}
 }
 
@@ -1220,5 +1226,284 @@ func (h *handlers) handleQuit(cmd *gedis_types.Command) error {
 	if cmd.IsSubMode() {
 		cmd.ConnState.QuitSubscription()
 	}
+	return nil
+}
+
+func (h *handlers) handleZadd(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 3 || len(args)%2 == 0 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	set := h.db.GetOrCreateSortedSet(key)
+
+	inserted := 0
+
+	for i := 1; i < len(args); i += 2 {
+		score, err := parseFloat(args[i])
+		if err != nil {
+			return fmt.Errorf("invalid score: %s", args[i])
+		}
+
+		member, err := parseBulkStr(args[i+1])
+		if err != nil {
+			return fmt.Errorf("invalid member: %s", args[i+1])
+		}
+
+		if !set.Insert(member, score) {
+			inserted += 1
+		}
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(inserted)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleZrank(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	member, err := parseBulkStr(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid member: %s", args[1])
+	}
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		cmd.WriteAny(resp.BulkStr{Size: -1})
+		return nil
+	}
+
+	rank, ok := set.Rank(member)
+	if !ok {
+		cmd.WriteAny(resp.BulkStr{Size: -1})
+		return nil
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(rank)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleZrange(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	start, err := parseInt(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid start index: %s", args[1])
+	}
+
+	stop, err := parseInt(args[2])
+	if err != nil {
+		return fmt.Errorf("invalid stop index: %s", args[2])
+	}
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	if stop < 0 {
+		stop = set.Len() + stop
+	}
+
+	if start < 0 {
+		start = set.Len() + start
+	}
+
+	if start > stop || start >= set.Len() {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	if stop >= set.Len() {
+		stop = set.Len() - 1
+	}
+
+	items := make([]any, 0, stop-start+1)
+
+	nodes := set.Range(start, stop)
+	for _, node := range nodes {
+		items = append(items, node.Value)
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	return nil
+}
+
+func (h *handlers) handleZscore(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	var score float64
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		score = 0
+		return nil
+	}
+
+	score, exists = set.Score(key)
+	if !exists {
+		score = 0
+		return nil
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(score)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleZrem(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(0)
+		}
+		return nil
+	}
+
+	removed := 0
+
+	for i := 1; i < len(args); i++ {
+		member, err := parseBulkStr(args[i])
+		if err != nil {
+			return fmt.Errorf("invalid member: %s", args[i])
+		}
+
+		if set.Remove(member) {
+			removed += 1
+		}
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(removed)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleZcard(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(0)
+		}
+		return nil
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(set.Len())
+	}
+
 	return nil
 }
