@@ -1395,7 +1395,7 @@ func (h *handlers) handleZscore(cmd *gedis_types.Command) error {
 	}
 
 	args := cmd.Cmd.Args
-	if len(args) != 1 {
+	if len(args) < 2 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 
@@ -1412,14 +1412,20 @@ func (h *handlers) handleZscore(cmd *gedis_types.Command) error {
 		return nil
 	}
 
-	score, exists = set.Score(key)
+	member, err := parseBulkStr(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid member: %s", args[1])
+	}
+
+	score, exists = set.Score(member)
 	if !exists {
 		score = 0
 		return nil
 	}
 
 	if h.shouldWriteOutput(cmd) {
-		cmd.WriteAny(score)
+		scoreStr := fmt.Sprintf("%.64f", score)
+		cmd.WriteAny(resp.BulkStr{Size: len(scoreStr), Value: scoreStr})
 	}
 
 	return nil
