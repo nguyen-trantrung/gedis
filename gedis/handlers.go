@@ -1375,7 +1375,7 @@ func (h *handlers) handleZrange(cmd *gedis_types.Command) error {
 
 	items := make([]any, 0, stop-start+1)
 
-	nodes := set.Range(start, stop)
+	nodes := set.Range(start, stop+1) // zrange is inclusive
 	for _, node := range nodes {
 		items = append(items, node.Value)
 	}
