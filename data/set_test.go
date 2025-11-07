@@ -149,3 +149,243 @@ func TestSortedSet_IsEmpty(t *testing.T) {
 		t.Fatalf("IsEmpty should be true after removal")
 	}
 }
+
+func TestSortedSet_Rank_NotFound(t *testing.T) {
+	s := data.NewSortedSet()
+
+	// Test on empty set
+	rank, ok := s.Rank("missing")
+	if ok {
+		t.Fatalf("expected Rank to return false for missing member in empty set")
+	}
+	if rank != -1 {
+		t.Fatalf("expected rank -1 for missing member, got %d", rank)
+	}
+
+	// Test on non-empty set
+	s.Insert("a", 1.0)
+	s.Insert("b", 2.0)
+
+	rank, ok = s.Rank("missing")
+	if ok {
+		t.Fatalf("expected Rank to return false for missing member")
+	}
+	if rank != -1 {
+		t.Fatalf("expected rank -1 for missing member, got %d", rank)
+	}
+}
+
+func TestSortedSet_Rank_SingleElement(t *testing.T) {
+	s := data.NewSortedSet()
+	s.Insert("only", 5.0)
+
+	rank, ok := s.Rank("only")
+	if !ok {
+		t.Fatalf("expected to find member 'only'")
+	}
+	if rank != 0 {
+		t.Fatalf("expected rank 0 for single element, got %d", rank)
+	}
+}
+
+func TestSortedSet_Rank_UniqueScores(t *testing.T) {
+	s := data.NewSortedSet()
+
+	// Insert in non-sorted order
+	s.Insert("third", 3.0)
+	s.Insert("first", 1.0)
+	s.Insert("fifth", 5.0)
+	s.Insert("second", 2.0)
+	s.Insert("fourth", 4.0)
+
+	tests := []struct {
+		member       string
+		expectedRank int
+	}{
+		{"first", 0},
+		{"second", 1},
+		{"third", 2},
+		{"fourth", 3},
+		{"fifth", 4},
+	}
+
+	for _, tt := range tests {
+		rank, ok := s.Rank(tt.member)
+		if !ok {
+			t.Fatalf("expected to find member '%s'", tt.member)
+		}
+		if rank != tt.expectedRank {
+			t.Fatalf("member '%s': expected rank %d, got %d", tt.member, tt.expectedRank, rank)
+		}
+	}
+}
+
+func TestSortedSet_Rank_SameScore_LexicographicOrder(t *testing.T) {
+	s := data.NewSortedSet()
+
+	// All have the same score, should be ordered lexicographically
+	s.Insert("charlie", 1.0)
+	s.Insert("alice", 1.0)
+	s.Insert("bob", 1.0)
+	s.Insert("david", 1.0)
+
+	tests := []struct {
+		member       string
+		expectedRank int
+	}{
+		{"alice", 0}, // lexicographically first
+		{"bob", 1},
+		{"charlie", 2},
+		{"david", 3}, // lexicographically last
+	}
+
+	for _, tt := range tests {
+		rank, ok := s.Rank(tt.member)
+		if !ok {
+			t.Fatalf("expected to find member '%s'", tt.member)
+		}
+		if rank != tt.expectedRank {
+			t.Fatalf("member '%s': expected rank %d, got %d", tt.member, tt.expectedRank, rank)
+		}
+	}
+}
+
+func TestSortedSet_Rank_MixedScores(t *testing.T) {
+	s := data.NewSortedSet()
+
+	// Mixed: some same scores, some unique
+	s.Insert("low1", 1.0)
+	s.Insert("low2", 1.0) // same as low1
+	s.Insert("mid", 5.0)  // unique
+	s.Insert("high1", 10.0)
+	s.Insert("high2", 10.0) // same as high1
+	s.Insert("high3", 10.0) // same as high1, high2
+
+	// Expected order: low1(1.0), low2(1.0), mid(5.0), high1(10.0), high2(10.0), high3(10.0)
+	// But with same scores, lexicographic ordering applies
+	tests := []struct {
+		member       string
+		expectedRank int
+	}{
+		{"low1", 0},
+		{"low2", 1},
+		{"mid", 2},
+		{"high1", 3},
+		{"high2", 4},
+		{"high3", 5},
+	}
+
+	for _, tt := range tests {
+		rank, ok := s.Rank(tt.member)
+		if !ok {
+			t.Fatalf("expected to find member '%s'", tt.member)
+		}
+		if rank != tt.expectedRank {
+			t.Fatalf("member '%s': expected rank %d, got %d", tt.member, tt.expectedRank, rank)
+		}
+	}
+}
+
+func TestSortedSet_Rank_AfterUpdate(t *testing.T) {
+	s := data.NewSortedSet()
+
+	s.Insert("a", 1.0)
+	s.Insert("b", 2.0)
+	s.Insert("c", 3.0)
+
+	// Initial ranks: a=0, b=1, c=2
+	rank, _ := s.Rank("b")
+	if rank != 1 {
+		t.Fatalf("expected initial rank 1 for 'b', got %d", rank)
+	}
+
+	// Update b's score to make it last
+	s.Insert("b", 5.0)
+
+	// New ranks: a=0, c=1, b=2
+	rank, ok := s.Rank("b")
+	if !ok {
+		t.Fatalf("expected to find member 'b' after update")
+	}
+	if rank != 2 {
+		t.Fatalf("expected rank 2 for 'b' after score update, got %d", rank)
+	}
+
+	// Verify other ranks shifted
+	rank, _ = s.Rank("c")
+	if rank != 1 {
+		t.Fatalf("expected rank 1 for 'c' after b's update, got %d", rank)
+	}
+}
+
+func TestSortedSet_Rank_AfterRemoval(t *testing.T) {
+	s := data.NewSortedSet()
+
+	s.Insert("a", 1.0)
+	s.Insert("b", 2.0)
+	s.Insert("c", 3.0)
+	s.Insert("d", 4.0)
+
+	// Remove middle element
+	s.Remove("b")
+
+	// New ranks: a=0, c=1, d=2
+	rank, ok := s.Rank("c")
+	if !ok {
+		t.Fatalf("expected to find member 'c'")
+	}
+	if rank != 1 {
+		t.Fatalf("expected rank 1 for 'c' after removal of 'b', got %d", rank)
+	}
+
+	rank, ok = s.Rank("d")
+	if !ok {
+		t.Fatalf("expected to find member 'd'")
+	}
+	if rank != 2 {
+		t.Fatalf("expected rank 2 for 'd' after removal of 'b', got %d", rank)
+	}
+}
+
+func TestSortedSet_Rank_NegativeScores(t *testing.T) {
+	s := data.NewSortedSet()
+
+	s.Insert("negative", -5.0)
+	s.Insert("zero", 0.0)
+	s.Insert("positive", 5.0)
+
+	tests := []struct {
+		member       string
+		expectedRank int
+	}{
+		{"negative", 0}, // lowest score
+		{"zero", 1},
+		{"positive", 2}, // highest score
+	}
+
+	for _, tt := range tests {
+		rank, ok := s.Rank(tt.member)
+		if !ok {
+			t.Fatalf("expected to find member '%s'", tt.member)
+		}
+		if rank != tt.expectedRank {
+			t.Fatalf("member '%s': expected rank %d, got %d", tt.member, tt.expectedRank, rank)
+		}
+	}
+}
+
+func TestSortedSet_Rank_FloatingPointScores(t *testing.T) {
+	s := data.NewSortedSet()
+
+	s.Insert("low", 1.1)
+	s.Insert("mid", 1.5)
+	s.Insert("high", 1.9)
+
+	rank, ok := s.Rank("mid")
+	if !ok {
+		t.Fatalf("expected to find member 'mid'")
+	}
+	if rank != 1 {
+		t.Fatalf("expected rank 1 for 'mid', got %d", rank)
+	}
+}

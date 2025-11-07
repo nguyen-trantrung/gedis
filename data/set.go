@@ -161,7 +161,7 @@ func (s *SortedSet) compare(l *column, r *column) int {
 func (s *SortedSet) lowerBound(score float64, value string) *column {
 	col := s.head
 	cmpCol := &column{nil, value, score}
-	for lvl := MAX_LEVEL - 1; lvl > 0; lvl -= 1 {
+	for lvl := MAX_LEVEL - 1; lvl >= 0; lvl -= 1 {
 		for col.cells[lvl].next != s.tail && s.compare(col.cells[lvl].next, cmpCol) < 0 {
 			col = col.cells[lvl].next
 		}
@@ -220,9 +220,7 @@ func (s *SortedSet) rank(value string, score float64) int {
 	}
 	rank := 0
 	for iter := s.head.cells[0].next; iter != col; iter = iter.cells[0].next {
-		if iter.score == score {
-			rank += 1
-		}
+		rank += 1
 	}
 	return rank
 }
