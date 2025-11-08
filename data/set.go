@@ -223,3 +223,20 @@ func (s *SortedSet[S]) rank(value string, score S) int {
 	}
 	return rank
 }
+
+func (s *SortedSet[S]) RangeByScore(min S, max S) []Node[S] {
+	return s.getRangeByScore(min, max)
+}
+
+func (s *SortedSet[S]) getRangeByScore(min S, max S) []Node[S] {
+	result := make([]Node[S], 0)
+	iter := s.lowerBound(min, "")
+	for iter != s.tail && cmp.Compare(iter.score, max) <= 0 {
+		result = append(result, Node[S]{
+			Score: iter.score,
+			Value: iter.value,
+		})
+		iter = iter.cells[0].next
+	}
+	return result
+}

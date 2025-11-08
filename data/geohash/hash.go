@@ -106,3 +106,46 @@ func encodeBinary(value, min, max float64, precision int) uint64 {
 
 	return bits
 }
+
+// EstimateBitsForRadius estimates the appropriate geohash precision (bits)
+// for a given search radius in meters and maximum precision
+func EstimateBitsForRadius(radius float64, maxBits int) int {
+	const earthRadius = 6371000.0
+
+	// For a given radius, estimate the cell size needed
+	// We want cells that are roughly 2x the radius to ensure coverage
+	targetCellSize := radius * 2
+
+	// Calculate degrees of latitude that corresponds to this distance
+	// (longitude varies by latitude, but this is a rough estimate)
+	degreesPerMeter := 1.0 / (earthRadius * 3.14159 / 180.0)
+	targetDegrees := targetCellSize * degreesPerMeter
+
+	const mercatorLatRange = 170.10225756
+
+	// Calculate how many bits we need
+	// Each bit divides the space in half
+	bits := 1
+	cellSize := mercatorLatRange
+	for bits < maxBits && cellSize > targetDegrees {
+		cellSize /= 2
+		bits += 1
+	}
+
+	// Use at least 1 bit, at most maxBits
+	if bits < 1 {
+		bits = 1
+	}
+	if bits > maxBits {
+		bits = maxBits
+	}
+
+	// Make sure bits is even for proper interleaving (or adjust as needed)
+	// Round down to nearest even number for balanced lat/lon precision
+	bits = (bits / 2) * 2
+	if bits == 0 {
+		bits = 2
+	}
+
+	return bits
+}
