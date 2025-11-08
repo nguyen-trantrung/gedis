@@ -7,12 +7,12 @@ import (
 )
 
 // helper to collect range fully
-func collectAll(s *data.SortedSet) []data.Node {
+func collectAll(s *data.SortedSet[float64]) []data.Node[float64] {
 	return s.Range(0, s.Len())
 }
 
 func TestSortedSet_InsertAndLen(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 	if s.Len() != 0 {
 		t.Fatalf("expected empty set length 0, got %d", s.Len())
 	}
@@ -51,7 +51,7 @@ func TestSortedSet_InsertAndLen(t *testing.T) {
 }
 
 func TestSortedSet_OrderByScoreThenValue(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 	s.Insert("b", 1)
 	s.Insert("a", 1) // same score, lexicographically smaller
 	s.Insert("c", 2)
@@ -74,7 +74,7 @@ func TestSortedSet_OrderByScoreThenValue(t *testing.T) {
 }
 
 func TestSortedSet_Remove(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 	s.Insert("x", 9)
 	s.Insert("y", 10)
 	s.Insert("z", 11)
@@ -103,7 +103,7 @@ func TestSortedSet_Remove(t *testing.T) {
 }
 
 func TestSortedSet_SearchNotFound(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 	if _, ok := s.Score("missing"); ok {
 		t.Fatalf("expected search on empty set to fail")
 	}
@@ -114,7 +114,7 @@ func TestSortedSet_SearchNotFound(t *testing.T) {
 }
 
 func TestSortedSet_RangeBounds(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 	s.Insert("one", 1)
 	s.Insert("two", 2)
 	s.Insert("three", 3)
@@ -137,7 +137,7 @@ func TestSortedSet_RangeBounds(t *testing.T) {
 }
 
 func TestSortedSet_IsEmpty(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 	// After init, head is not nil, so IsEmpty reports whether underlying head pointer is nil.
 	if !s.IsEmpty() {
 		t.Fatalf("IsEmpty should be true after initialization")
@@ -151,7 +151,7 @@ func TestSortedSet_IsEmpty(t *testing.T) {
 }
 
 func TestSortedSet_Rank_NotFound(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 
 	// Test on empty set
 	rank, ok := s.Rank("missing")
@@ -176,7 +176,7 @@ func TestSortedSet_Rank_NotFound(t *testing.T) {
 }
 
 func TestSortedSet_Rank_SingleElement(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 	s.Insert("only", 5.0)
 
 	rank, ok := s.Rank("only")
@@ -189,7 +189,7 @@ func TestSortedSet_Rank_SingleElement(t *testing.T) {
 }
 
 func TestSortedSet_Rank_UniqueScores(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 
 	// Insert in non-sorted order
 	s.Insert("third", 3.0)
@@ -221,7 +221,7 @@ func TestSortedSet_Rank_UniqueScores(t *testing.T) {
 }
 
 func TestSortedSet_Rank_SameScore_LexicographicOrder(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 
 	// All have the same score, should be ordered lexicographically
 	s.Insert("charlie", 1.0)
@@ -251,7 +251,7 @@ func TestSortedSet_Rank_SameScore_LexicographicOrder(t *testing.T) {
 }
 
 func TestSortedSet_Rank_MixedScores(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 
 	// Mixed: some same scores, some unique
 	s.Insert("low1", 1.0)
@@ -287,7 +287,7 @@ func TestSortedSet_Rank_MixedScores(t *testing.T) {
 }
 
 func TestSortedSet_Rank_AfterUpdate(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 
 	s.Insert("a", 1.0)
 	s.Insert("b", 2.0)
@@ -319,7 +319,7 @@ func TestSortedSet_Rank_AfterUpdate(t *testing.T) {
 }
 
 func TestSortedSet_Rank_AfterRemoval(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 
 	s.Insert("a", 1.0)
 	s.Insert("b", 2.0)
@@ -348,7 +348,7 @@ func TestSortedSet_Rank_AfterRemoval(t *testing.T) {
 }
 
 func TestSortedSet_Rank_NegativeScores(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 
 	s.Insert("negative", -5.0)
 	s.Insert("zero", 0.0)
@@ -375,7 +375,7 @@ func TestSortedSet_Rank_NegativeScores(t *testing.T) {
 }
 
 func TestSortedSet_Rank_FloatingPointScores(t *testing.T) {
-	s := data.NewSortedSet()
+	s := data.NewSortedSet[float64]()
 
 	s.Insert("low", 1.1)
 	s.Insert("mid", 1.5)

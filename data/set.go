@@ -1,8 +1,8 @@
 package data
 
 import (
+	"cmp"
 	"math/rand"
-	"strings"
 	"time"
 )
 
@@ -14,61 +14,62 @@ func newSeededRand() *rand.Rand {
 	return rand.New(rand.NewSource(time.Now().UnixNano()))
 }
 
-type cell struct {
-	prev *column
-	next *column
+type cell[S cmp.Ordered] struct {
+	prev *column[S]
+	next *column[S]
 }
 
-type column struct {
-	cells []cell
+type column[S cmp.Ordered] struct {
+	cells []cell[S]
 	value string
-	score float64
+	score S
 }
 
-type SortedSet struct {
-	head   *column
-	tail   *column
-	scores map[string]float64
+type SortedSet[S cmp.Ordered] struct {
+	head   *column[S]
+	tail   *column[S]
+	scores map[string]S
 }
 
-func NewSortedSet() *SortedSet {
-	set := &SortedSet{
+func NewSortedSet[S cmp.Ordered]() *SortedSet[S] {
+	set := &SortedSet[S]{
 		head:   nil,
 		tail:   nil,
-		scores: make(map[string]float64),
+		scores: make(map[string]S),
 	}
 	set.init()
 	return set
 }
 
-func (s *SortedSet) init() {
-	s.head = &column{value: "", score: 0}
-	s.tail = &column{value: "", score: 0}
+func (s *SortedSet[S]) init() {
+	var zero S
+	s.head = &column[S]{value: "", score: zero}
+	s.tail = &column[S]{value: "", score: zero}
 	for lvl := 0; lvl < MAX_LEVEL; lvl += 1 {
-		s.head.cells = append(s.head.cells, cell{
+		s.head.cells = append(s.head.cells, cell[S]{
 			prev: nil,
 			next: s.tail,
 		})
-		s.tail.cells = append(s.tail.cells, cell{
+		s.tail.cells = append(s.tail.cells, cell[S]{
 			prev: s.head,
 			next: nil,
 		})
 	}
 }
 
-func (s *SortedSet) Len() int {
+func (s *SortedSet[S]) Len() int {
 	return len(s.scores)
 }
 
-func (s *SortedSet) IsEmpty() bool {
+func (s *SortedSet[S]) IsEmpty() bool {
 	return len(s.scores) == 0
 }
 
-func (s *SortedSet) Insert(data string, score float64) bool {
+func (s *SortedSet[S]) Insert(data string, score S) bool {
 	return s.insert(data, score)
 }
 
-func (s *SortedSet) insert(value string, score float64) bool {
+func (s *SortedSet[S]) insert(value string, score S) bool {
 	oldScore, exists := s.scores[value]
 	if exists && oldScore == score {
 		return true
@@ -76,16 +77,16 @@ func (s *SortedSet) insert(value string, score float64) bool {
 
 	isUpdate := false
 
-	col := &column{nil, value, score}
+	col := &column[S]{nil, value, score}
 	if exists {
 		isUpdate = true
 		s.remove(value, oldScore)
 	}
 
 	// level 0, add levels bottom up
-	col.cells = append(col.cells, cell{nil, nil})
+	col.cells = append(col.cells, cell[S]{nil, nil})
 	for len(col.cells) < MAX_LEVEL && s.shouldAddLevel() {
-		col.cells = append(col.cells, cell{nil, nil})
+		col.cells = append(col.cells, cell[S]{nil, nil})
 	}
 
 	iter := s.head
@@ -108,7 +109,7 @@ func (s *SortedSet) insert(value string, score float64) bool {
 	return isUpdate
 }
 
-func (s *SortedSet) Remove(value string) bool {
+func (s *SortedSet[S]) Remove(value string) bool {
 	score, exists := s.scores[value]
 	if !exists {
 		return false
@@ -116,8 +117,8 @@ func (s *SortedSet) Remove(value string) bool {
 	return s.remove(value, score)
 }
 
-func (s *SortedSet) remove(value string, score float64) bool {
-	col := &column{nil, value, score}
+func (s *SortedSet[S]) remove(value string, score S) bool {
+	col := &column[S]{nil, value, score}
 
 	lbCol := s.lowerBound(score, value)
 	if s.compare(lbCol, col) != 0 {
@@ -143,24 +144,22 @@ func (s *SortedSet) remove(value string, score float64) bool {
 	delete(s.scores, value)
 	return true
 }
-func (s *SortedSet) shouldAddLevel() bool {
+
+func (s *SortedSet[S]) shouldAddLevel() bool {
 	return seed.Int()%2 > 0
 }
 
-func (s *SortedSet) compare(l *column, r *column) int {
-	if l.score > r.score {
-		return 1
-	}
-	if l.score < r.score {
-		return -1
-	}
-	return strings.Compare(l.value, r.value)
+func (s *SortedSet[S]) compare(l *column[S], r *column[S]) int {
+	return cmp.Or(
+		cmp.Compare(l.score, r.score),
+		cmp.Compare(l.value, r.value),
+	)
 }
 
 // lowerBound finds the largest column with a score that is smaller/equal than the score
-func (s *SortedSet) lowerBound(score float64, value string) *column {
+func (s *SortedSet[S]) lowerBound(score S, value string) *column[S] {
 	col := s.head
-	cmpCol := &column{nil, value, score}
+	cmpCol := &column[S]{nil, value, score}
 	for lvl := MAX_LEVEL - 1; lvl >= 0; lvl -= 1 {
 		for col.cells[lvl].next != s.tail && s.compare(col.cells[lvl].next, cmpCol) < 0 {
 			col = col.cells[lvl].next
@@ -169,27 +168,27 @@ func (s *SortedSet) lowerBound(score float64, value string) *column {
 	return col.cells[0].next
 }
 
-type Node struct {
-	Score float64
+type Node[S cmp.Ordered] struct {
+	Score S
 	Value string
 }
 
-func (s *SortedSet) Range(lidx int, ridx int) []Node {
+func (s *SortedSet[S]) Range(lidx int, ridx int) []Node[S] {
 	return s.getRange(lidx, ridx)
 }
 
-func (s *SortedSet) getRange(lidx int, ridx int) []Node {
+func (s *SortedSet[S]) getRange(lidx int, ridx int) []Node[S] {
 	if lidx >= ridx {
 		return nil
 	}
-	result := make([]Node, 0, ridx-lidx+1)
+	result := make([]Node[S], 0, ridx-lidx+1)
 	iter := s.head.cells[0].next
 	for i := 0; i < len(s.scores); i += 1 {
 		if iter == s.tail {
 			break
 		}
 		if i >= lidx && i < ridx {
-			result = append(result, Node{
+			result = append(result, Node[S]{
 				Score: iter.score,
 				Value: iter.value,
 			})
@@ -200,12 +199,12 @@ func (s *SortedSet) getRange(lidx int, ridx int) []Node {
 	return result
 }
 
-func (s *SortedSet) Score(value string) (float64, bool) {
+func (s *SortedSet[S]) Score(value string) (S, bool) {
 	score, exists := s.scores[value]
 	return score, exists
 }
 
-func (s *SortedSet) Rank(value string) (int, bool) {
+func (s *SortedSet[S]) Rank(value string) (int, bool) {
 	score, exists := s.scores[value]
 	if !exists {
 		return -1, false
@@ -213,9 +212,9 @@ func (s *SortedSet) Rank(value string) (int, bool) {
 	return s.rank(value, score), true
 }
 
-func (s *SortedSet) rank(value string, score float64) int {
+func (s *SortedSet[S]) rank(value string, score S) int {
 	col := s.lowerBound(score, value)
-	if s.compare(col, &column{nil, value, score}) != 0 {
+	if s.compare(col, &column[S]{nil, value, score}) != 0 {
 		panic("rank called on non-existing member")
 	}
 	rank := 0

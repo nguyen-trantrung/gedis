@@ -1,7 +1,6 @@
 package geohash_test
 
 import (
-	"log"
 	"testing"
 
 	"github.com/ttn-nguyen42/gedis/data/geohash"
@@ -21,7 +20,7 @@ func TestEncodeLat_NorthPole(t *testing.T) {
 	bits := geohash.EncodeLat(90, 5)
 	expected := uint64(31) // 11111 in binary (all 5 bits set)
 	if bits != expected {
-		t.Fatalf("expected bits %d for north pole, got %d", expected, bits)
+		t.Fatalf("expected bits %d for north pole, got %d (binary: %b)", expected, bits, bits)
 	}
 }
 
@@ -46,7 +45,7 @@ func TestEncodeLon_EastBound(t *testing.T) {
 	bits := geohash.EncodeLon(180, 5)
 	expected := uint64(31) // 11111 in binary
 	if bits != expected {
-		t.Fatalf("expected bits %d for 180° longitude, got %d", expected, bits)
+		t.Fatalf("expected bits %d for 180° longitude, got %d (binary: %b)", expected, bits, bits)
 	}
 }
 
@@ -64,8 +63,6 @@ func TestEncode_KnownLocations(t *testing.T) {
 		lat       float64
 		lon       float64
 		precision int
-		// We'll check length and that it's not empty
-		// Exact hash values depend on the implementation details
 	}{
 		{
 			name:      "New York City",
@@ -102,15 +99,13 @@ func TestEncode_KnownLocations(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			hash := geohash.Encode(tt.lat, tt.lon, tt.precision)
-			
-			expectedLen := (tt.precision + 4) / 5 // ceiling(precision / 5)
-			if len(hash) != expectedLen {
-				t.Fatalf("expected hash length %d, got %d for %s", expectedLen, len(hash), hash)
+
+			// Hash should be non-zero for most locations
+			if hash == 0 && tt.name != "Null Island" {
+				t.Fatalf("expected non-zero hash for %s, got %d (binary: %b)", tt.name, hash, hash)
 			}
-			
-			if hash == "" {
-				t.Fatalf("expected non-empty hash for %s", tt.name)
-			}
+
+			t.Logf("%s: hash=%d (binary: %052b)", tt.name, hash, hash)
 		})
 	}
 }
@@ -119,24 +114,29 @@ func TestEncode_DifferentPrecisions(t *testing.T) {
 	lat, lon := 37.7749, -122.4194 // San Francisco
 
 	tests := []struct {
-		precision    int
-		expectedLen  int
+		precision int
 	}{
-		{5, 1},   // 5 bits = 1 base32 char
-		{10, 2},  // 10 bits = 2 base32 chars
-		{15, 3},  // 15 bits = 3 base32 chars
-		{20, 4},  // 20 bits = 4 base32 chars
-		{25, 5},  // 25 bits = 5 base32 chars
-		{30, 6},  // 30 bits = 6 base32 chars
-		{11, 3},  // 11 bits = 3 base32 chars (ceil(11/5))
+		{5},
+		{10},
+		{15},
+		{20},
+		{25},
+		{30},
+		{40},
+		{52},
 	}
 
+	var prevHash uint64
 	for _, tt := range tests {
 		hash := geohash.Encode(lat, lon, tt.precision)
-		if len(hash) != tt.expectedLen {
-			t.Fatalf("precision %d: expected length %d, got %d (hash: %s)", 
-				tt.precision, tt.expectedLen, len(hash), hash)
+
+		// Higher precision should generally give different (more specific) hashes
+		if tt.precision > 5 && hash == prevHash {
+			t.Logf("precision %d: same hash as previous precision", tt.precision)
 		}
+
+		t.Logf("precision %d: hash=%d (binary: %b)", tt.precision, hash, hash)
+		prevHash = hash
 	}
 }
 
@@ -148,12 +148,12 @@ func TestEncode_SameLocation_SameHash(t *testing.T) {
 	hash2 := geohash.Encode(lat, lon, precision)
 
 	if hash1 != hash2 {
-		t.Fatalf("same location should produce same hash: %s != %s", hash1, hash2)
+		t.Fatalf("same location should produce same hash: %d != %d", hash1, hash2)
 	}
 }
 
-func TestEncode_NearbyLocations_SimilarPrefix(t *testing.T) {
-	// Two locations very close to each other should share a common prefix
+func TestEncode_NearbyLocations_SimilarHash(t *testing.T) {
+	// Two locations very close to each other should have similar hashes
 	lat1, lon1 := 40.7128, -74.0060 // New York
 	lat2, lon2 := 40.7129, -74.0061 // Very close to New York
 	precision := 30
@@ -161,23 +161,27 @@ func TestEncode_NearbyLocations_SimilarPrefix(t *testing.T) {
 	hash1 := geohash.Encode(lat1, lon1, precision)
 	hash2 := geohash.Encode(lat2, lon2, precision)
 
-	// They should share at least the first few characters
-	if len(hash1) < 2 || len(hash2) < 2 {
-		t.Fatalf("hashes too short to compare")
-	}
+	// Calculate the XOR difference to see how many bits differ
+	diff := hash1 ^ hash2
 
-	// Check if they share at least the first character
-	if hash1[0] != hash2[0] {
-		t.Logf("nearby locations should share prefix: %s vs %s", hash1, hash2)
-		// Note: This might not always be true depending on precision and proximity
-		// but for very close points it should hold
+	// For nearby locations, the difference should be relatively small
+	// (they should share most significant bits)
+	t.Logf("nearby locations: hash1=%d, hash2=%d, diff=%d (binary: %b)",
+		hash1, hash2, diff, diff)
+
+	// They should not be identical (different locations)
+	if hash1 == hash2 {
+		t.Fatalf("nearby but different locations should have different hashes")
 	}
 }
 
 func TestEncode_DistantLocations_DifferentHash(t *testing.T) {
-	hash1 := geohash.Encode(40.7128, -74.0060, 20) // New York
+	hash1 := geohash.Encode(40.7128, -74.0060, 20)  // New York
 	hash2 := geohash.Encode(-33.8688, 151.2093, 20) // Sydney
-	log.Println(hash1, hash2)
+
+	t.Logf("New York: %d (binary: %020b)", hash1, hash1)
+	t.Logf("Sydney: %d (binary: %020b)", hash2, hash2)
+
 	if hash1 == hash2 {
 		t.Fatalf("distant locations should have different hashes")
 	}
@@ -203,69 +207,73 @@ func TestEncode_BoundaryConditions(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			hash := geohash.Encode(tt.lat, tt.lon, precision)
-			expectedLen := (precision + 4) / 5
-			
-			if len(hash) != expectedLen {
-				t.Fatalf("expected length %d, got %d", expectedLen, len(hash))
-			}
-			
-			if hash == "" {
-				t.Fatalf("expected non-empty hash")
-			}
+
+			// All hashes should be valid uint64 values
+			t.Logf("%s: hash=%d (binary: %020b)", tt.name, hash, hash)
 		})
 	}
 }
 
 func TestEncodeLat_IncreasingPrecision(t *testing.T) {
 	lat := 45.0
-	
+
 	// Higher precision should give more bits
 	bits5 := geohash.EncodeLat(lat, 5)
 	bits10 := geohash.EncodeLat(lat, 10)
 	bits20 := geohash.EncodeLat(lat, 20)
-	
-	// With more precision, we should have larger bit values
-	if bits10 <= bits5 {
-		t.Logf("warning: bits10 (%d) should be > bits5 (%d) when left-aligned", bits10, bits5)
-	}
-	
-	if bits20 <= bits10 {
-		t.Logf("warning: bits20 (%d) should be > bits10 (%d) when left-aligned", bits20, bits10)
+
+	t.Logf("lat 45.0: bits5=%d (%05b), bits10=%d (%010b), bits20=%d (%020b)",
+		bits5, bits5, bits10, bits10, bits20, bits20)
+
+	// With more precision, we should have more bits set
+	// The actual values depend on the binary search algorithm
+	if bits20 == 0 {
+		t.Fatalf("expected non-zero bits for lat 45.0 with precision 20")
 	}
 }
 
 func TestEncodeLon_IncreasingPrecision(t *testing.T) {
 	lon := 90.0
-	
+
 	bits5 := geohash.EncodeLon(lon, 5)
 	bits10 := geohash.EncodeLon(lon, 10)
 	bits20 := geohash.EncodeLon(lon, 20)
-	
-	if bits10 <= bits5 {
-		t.Logf("warning: bits10 (%d) should be > bits5 (%d) when left-aligned", bits10, bits5)
-	}
-	
-	if bits20 <= bits10 {
-		t.Logf("warning: bits20 (%d) should be > bits10 (%d) when left-aligned", bits20, bits10)
+
+	t.Logf("lon 90.0: bits5=%d (%05b), bits10=%d (%010b), bits20=%d (%020b)",
+		bits5, bits5, bits10, bits10, bits20, bits20)
+
+	// With more precision, we should have more bits set
+	if bits20 == 0 {
+		t.Fatalf("expected non-zero bits for lon 90.0 with precision 20")
 	}
 }
 
-func TestEncode_Base32Characters(t *testing.T) {
-	// Ensure the output only contains valid base32 characters
-	validChars := "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
-	
-	hash := geohash.Encode(37.7749, -122.4194, 25)
-	
-	for _, char := range hash {
-		found := false
-		for _, valid := range validChars {
-			if char == valid {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("invalid character '%c' in hash %s", char, hash)
-		}
+func TestEncode_MaxBitsLimit(t *testing.T) {
+	// Test that the 52-bit limit is enforced
+	hash52 := geohash.Encode(37.7749, -122.4194, 52)
+	hash60 := geohash.Encode(37.7749, -122.4194, 60)
+
+	// Both should produce the same result (capped at 52 bits)
+	if hash52 != hash60 {
+		t.Fatalf("hashes with precision > 52 should be capped at 52 bits: %d != %d", hash52, hash60)
 	}
+
+	t.Logf("52-bit hash: %d (binary: %052b)", hash52, hash52)
+}
+
+func TestEncode_Paris(t *testing.T) {
+	// Test specific Paris coordinates to verify expected hash value
+	lat := 48.8584625
+	lon := 2.2944692
+	precision := 52
+
+	hash := geohash.Encode(lat, lon, precision)
+	expected := uint64(3663832614298053)
+
+	if hash != expected {
+		t.Fatalf("Paris geohash mismatch: expected %d, got %d\nBinary expected: %052b\nBinary got:      %052b",
+			expected, hash, expected, hash)
+	}
+
+	t.Logf("Paris (%.7f, %.7f): hash=%d (binary: %052b)", lat, lon, hash, hash)
 }

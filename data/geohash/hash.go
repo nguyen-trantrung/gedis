@@ -1,32 +1,25 @@
 package geohash
 
-import (
-	"math"
-	"strings"
-)
-
-const base32Alphabet = "0123456789bcdefghjkmnpqrstuvwxyz"
-
-// Encode generates a geohash string for the given latitude, longitude and number of bits
-func Encode(lat, lon float64, bits int) string {
-	// Calculate how many base32 characters we need (5 bits per character)
-	numChars := int(math.Ceil(float64(bits) / 5.0))
-
-	var result strings.Builder
-	result.Grow(numChars)
+// Encode generates a geohash as uint64 for the given latitude, longitude and number of bits
+// Maximum bits is 52 (to fit in uint64 without precision loss in interleaving)
+func Encode(lat, lon float64, bits int) uint64 {
+	if bits > 52 {
+		bits = 52
+	}
 
 	latRange := [2]float64{-90.0, 90.0}
 	lonRange := [2]float64{-180.0, 180.0}
 
-	var ch uint8
-	var bit uint8
+	var hash uint64
 	isEven := true
 
 	for range bits {
+		hash <<= 1
+
 		if isEven {
 			mid := (lonRange[0] + lonRange[1]) / 2
 			if lon >= mid {
-				ch |= (1 << (4 - bit))
+				hash |= 1
 				lonRange[0] = mid
 			} else {
 				lonRange[1] = mid
@@ -34,7 +27,7 @@ func Encode(lat, lon float64, bits int) string {
 		} else {
 			mid := (latRange[0] + latRange[1]) / 2
 			if lat >= mid {
-				ch |= (1 << (4 - bit)) // 4 = 11111
+				hash |= 1
 				latRange[0] = mid
 			} else {
 				latRange[1] = mid
@@ -42,21 +35,48 @@ func Encode(lat, lon float64, bits int) string {
 		}
 
 		isEven = !isEven
-		bit += 1
+	}
 
-		// Every 5 bits, write a base32 character
-		if bit == 5 {
-			result.WriteByte(base32Alphabet[ch])
-			ch = 0
-			bit = 0
+	return hash
+}
+
+// Decode converts a geohash back to latitude and longitude coordinates
+// Returns the center point of the hash's bounding box
+func Decode(hash uint64, bits int) (lat, lon float64) {
+	if bits > 52 {
+		bits = 52
+	}
+
+	latRange := [2]float64{-90.0, 90.0}
+	lonRange := [2]float64{-180.0, 180.0}
+
+	isEven := true
+
+	for i := bits - 1; i >= 0; i -= 1 {
+		bit := (hash >> i) & 1
+
+		if isEven {
+			mid := (lonRange[0] + lonRange[1]) / 2
+			if bit == 1 {
+				lonRange[0] = mid
+			} else {
+				lonRange[1] = mid
+			}
+		} else {
+			mid := (latRange[0] + latRange[1]) / 2
+			if bit == 1 {
+				latRange[0] = mid
+			} else {
+				latRange[1] = mid
+			}
 		}
+
+		isEven = !isEven
 	}
 
-	if bit > 0 {
-		result.WriteByte(base32Alphabet[ch])
-	}
-
-	return result.String()
+	lat = (latRange[0] + latRange[1]) / 2
+	lon = (lonRange[0] + lonRange[1]) / 2
+	return
 }
 
 // EncodeLat encodes latitude into binary representation with given precision

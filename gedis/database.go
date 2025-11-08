@@ -15,7 +15,8 @@ type database struct {
 	num   int
 	hm    *data.HashMap
 	list  map[any]*data.LinkedList
-	ss    map[any]*data.SortedSet
+	ss    map[any]*data.SortedSet[float64]
+	gi    map[any]*data.GeoIndex
 	block *blockingOps
 }
 
@@ -24,7 +25,8 @@ func newDb(n int) *database {
 		num:  n,
 		hm:   data.NewHashMap(),
 		list: make(map[any]*data.LinkedList),
-		ss:   make(map[any]*data.SortedSet),
+		ss:   make(map[any]*data.SortedSet[float64]),
+		gi:   make(map[any]*data.GeoIndex),
 		block: &blockingOps{
 			blockLpop: make(map[any][]*gedis_types.Command),
 		},
@@ -64,16 +66,16 @@ func (d *database) DeleteList(key any) bool {
 	return exists
 }
 
-func (d *database) GetOrCreateSortedSet(key any) *data.SortedSet {
+func (d *database) GetOrCreateSortedSet(key any) *data.SortedSet[float64] {
 	ss, exists := d.ss[key]
 	if !exists {
-		ss = data.NewSortedSet()
+		ss = data.NewSortedSet[float64]()
 		d.ss[key] = ss
 	}
 	return ss
 }
 
-func (d *database) GetSortedSet(key any) (*data.SortedSet, bool) {
+func (d *database) GetSortedSet(key any) (*data.SortedSet[float64], bool) {
 	ss, exists := d.ss[key]
 	return ss, exists
 }
@@ -82,6 +84,28 @@ func (d *database) DeleteSortedSet(key any) bool {
 	_, exists := d.ss[key]
 	if exists {
 		delete(d.ss, key)
+	}
+	return exists
+}
+
+func (d *database) GetOrCreateGeoIndex(key any) *data.GeoIndex {
+	gi, exists := d.gi[key]
+	if !exists {
+		gi = data.NewGeoIndex(52)
+		d.gi[key] = gi
+	}
+	return gi
+}
+
+func (d *database) GetGeoIndex(key any) (*data.GeoIndex, bool) {
+	gi, exists := d.gi[key]
+	return gi, exists
+}
+
+func (d *database) DeleteGeoIndex(key any) bool {
+	_, exists := d.gi[key]
+	if exists {
+		delete(d.gi, key)
 	}
 	return exists
 }
