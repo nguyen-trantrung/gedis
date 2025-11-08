@@ -33,8 +33,8 @@ func (i *GeoIndex) add(key string, lat, lon float64) bool {
 }
 
 func (i *GeoIndex) validate(lat, lon float64) error {
-	if lat <= -90.0 || lat >= 90.0 {
-		return fmt.Errorf("invalid latitute value")
+	if lat <= -85.05112878 || lat >= 85.05112878 {
+		return fmt.Errorf("invalid latitude value")
 	}
 	if lon <= -180.0 || lon >= 180.0 {
 		return fmt.Errorf("invalid longitude value")
