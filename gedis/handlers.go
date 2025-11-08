@@ -91,6 +91,7 @@ func (h *handlers) init() {
 		"geoadd":      {h.handleGeoAdd, true},
 		"geopos":      {h.handleGeoPos, false},
 		"geodist":     {h.handleGeoDist, false},
+		"geosearch":   {h.handleGeoSearch, false},
 	}
 }
 
@@ -1664,6 +1665,90 @@ func (h *handlers) handleGeoDist(cmd *gedis_types.Command) error {
 	if h.shouldWriteOutput(cmd) {
 		distStr := fmt.Sprintf("%.6f", distance)
 		cmd.WriteAny(resp.BulkStr{Size: len(distStr), Value: distStr})
+	}
+
+	return nil
+}
+
+func (h *handlers) handleGeoSearch(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 6 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	fromType, err := parseBulkStr(args[1])
+	if err != nil || strings.ToLower(fromType) != "fromlonlat" {
+		return fmt.Errorf("%w: expected FROMLONLAT", ErrInvalidArguments)
+	}
+
+	lon, err := parseFloat(args[2])
+	if err != nil {
+		return fmt.Errorf("invalid longitude: %s", args[2])
+	}
+
+	lat, err := parseFloat(args[3])
+	if err != nil {
+		return fmt.Errorf("invalid latitude: %s", args[3])
+	}
+
+	// Parse BYRADIUS
+	byType, err := parseBulkStr(args[4])
+	if err != nil || strings.ToLower(byType) != "byradius" {
+		return fmt.Errorf("%w: expected BYRADIUS", ErrInvalidArguments)
+	}
+
+	radius, err := parseFloat(args[5])
+	if err != nil {
+		return fmt.Errorf("invalid radius: %s", args[5])
+	}
+
+	unit, err := parseBulkStr(args[6])
+	if err != nil {
+		return fmt.Errorf("invalid unit: %s", args[6])
+	}
+
+	// Convert radius to meters (Haversine returns meters)
+	radiusInMeters := radius
+	switch strings.ToLower(unit) {
+	case "m":
+		radiusInMeters = radius
+	case "km":
+		radiusInMeters = radius * 1000
+	case "mi":
+		radiusInMeters = radius * 1609.34
+	case "ft":
+		radiusInMeters = radius * 0.3048
+	default:
+		return fmt.Errorf("unsupported unit '%s', use m, km, mi, or ft", unit)
+	}
+
+	geoSet := h.db.GetOrCreateGeoIndex(key)
+
+	members, err := geoSet.SearchRadius(lat, lon, radiusInMeters)
+	if err != nil {
+		return err
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		items := make([]any, len(members))
+		for i, member := range members {
+			items[i] = member
+		}
+		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
 	}
 
 	return nil
