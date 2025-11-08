@@ -1252,14 +1252,9 @@ func (h *handlers) handleZadd(cmd *gedis_types.Command) error {
 		return fmt.Errorf("invalid key: %s", key)
 	}
 
-	inserted := 0
-
-	// Check if this is a GeoIndex - if so, don't allow ZADD
-	if _, exists := h.db.GetGeoIndex(key); exists {
-		return fmt.Errorf("ZADD not supported for geospatial indices, use GEOADD instead")
-	}
-
 	set := h.db.GetOrCreateSortedSet(key)
+
+	inserted := 0
 
 	for i := 1; i < len(args); i += 2 {
 		score, err := parseFloat(args[i])
@@ -1309,21 +1304,13 @@ func (h *handlers) handleZrank(cmd *gedis_types.Command) error {
 		return fmt.Errorf("invalid member: %s", args[1])
 	}
 
-	var rank int
-	var ok bool
-
-	// Try GeoIndex first
-	if geoSet, exists := h.db.GetGeoIndex(key); exists {
-		rank, ok = geoSet.SortedSet().Rank(member)
-	} else if set, exists := h.db.GetSortedSet(key); exists {
-		// Fallback to regular SortedSet
-		rank, ok = set.Rank(member)
-	} else {
-		// Key doesn't exist
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
 	}
 
+	rank, ok := set.Rank(member)
 	if !ok {
 		cmd.WriteAny(resp.BulkStr{Size: -1})
 		return nil
@@ -1366,59 +1353,34 @@ func (h *handlers) handleZrange(cmd *gedis_types.Command) error {
 		return fmt.Errorf("invalid stop index: %s", args[2])
 	}
 
-	var setLen int
-	var items []any
-
-	// Try GeoIndex first
-	if geoSet, exists := h.db.GetGeoIndex(key); exists {
-		setLen = geoSet.SortedSet().Len()
-
-		if stop < 0 {
-			stop = setLen + stop
-		}
-		if start < 0 {
-			start = setLen + start
-		}
-		if start > stop || start >= setLen {
-			cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
-			return nil
-		}
-		if stop >= setLen {
-			stop = setLen - 1
-		}
-
-		nodes := geoSet.SortedSet().Range(start, stop+1)
-		items = make([]any, 0, len(nodes))
-		for _, node := range nodes {
-			items = append(items, node.Value)
-		}
-	} else if set, exists := h.db.GetSortedSet(key); exists {
-		// Fallback to regular SortedSet
-		setLen = set.Len()
-
-		if stop < 0 {
-			stop = setLen + stop
-		}
-		if start < 0 {
-			start = setLen + start
-		}
-		if start > stop || start >= setLen {
-			cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
-			return nil
-		}
-		if stop >= setLen {
-			stop = setLen - 1
-		}
-
-		nodes := set.Range(start, stop+1)
-		items = make([]any, 0, len(nodes))
-		for _, node := range nodes {
-			items = append(items, node.Value)
-		}
-	} else {
-		// Key doesn't exist
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
 		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
 		return nil
+	}
+
+	if stop < 0 {
+		stop = set.Len() + stop
+	}
+
+	if start < 0 {
+		start = set.Len() + start
+	}
+
+	if start > stop || start >= set.Len() {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	if stop >= set.Len() {
+		stop = set.Len() - 1
+	}
+
+	items := make([]any, 0, stop-start+1)
+
+	nodes := set.Range(start, stop+1) // zrange is inclusive
+	for _, node := range nodes {
+		items = append(items, node.Value)
 	}
 
 	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
@@ -1450,25 +1412,6 @@ func (h *handlers) handleZscore(cmd *gedis_types.Command) error {
 		return fmt.Errorf("invalid member: %s", args[1])
 	}
 
-	// Try GeoIndex first
-	if geoSet, ok := h.db.GetGeoIndex(key); ok {
-		// For GeoIndex, score is the geohash (uint64)
-		geohash, exists := geoSet.SortedSet().Score(member)
-		if !exists {
-			if h.shouldWriteOutput(cmd) {
-				cmd.WriteAny(resp.BulkStr{Size: -1})
-			}
-			return nil
-		}
-
-		if h.shouldWriteOutput(cmd) {
-			scoreStr := fmt.Sprintf("%d", geohash)
-			cmd.WriteAny(resp.BulkStr{Size: len(scoreStr), Value: scoreStr})
-		}
-		return nil
-	}
-
-	// Fallback to regular SortedSet
 	set, exists := h.db.GetSortedSet(key)
 	if !exists {
 		if h.shouldWriteOutput(cmd) {
@@ -1561,16 +1504,8 @@ func (h *handlers) handleZcard(cmd *gedis_types.Command) error {
 		return fmt.Errorf("invalid key: %s", key)
 	}
 
-	var length int
-
-	// Try GeoIndex first
-	if geoSet, ok := h.db.GetGeoIndex(key); ok {
-		length = geoSet.SortedSet().Len()
-	} else if set, ok := h.db.GetSortedSet(key); ok {
-		// Fallback to regular SortedSet
-		length = set.Len()
-	} else {
-		// Key doesn't exist
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
 		if h.shouldWriteOutput(cmd) {
 			cmd.WriteAny(0)
 		}
@@ -1578,7 +1513,7 @@ func (h *handlers) handleZcard(cmd *gedis_types.Command) error {
 	}
 
 	if h.shouldWriteOutput(cmd) {
-		cmd.WriteAny(length)
+		cmd.WriteAny(set.Len())
 	}
 
 	return nil
@@ -1661,15 +1596,7 @@ func (h *handlers) handleGeoPos(cmd *gedis_types.Command) error {
 		return fmt.Errorf("invalid key: %s", key)
 	}
 
-	geoSet, exists := h.db.GetGeoIndex(key)
-	if !exists {
-		items := make([]any, 0, len(args)-1)
-		for i := 1; i < len(args); i += 1 {
-			items = append(items, resp.Array{Size: -1})
-		}
-		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
-		return nil
-	}
+	geoSet := h.db.GetOrCreateGeoIndex(key)
 
 	items := make([]any, 0, len(args)-1)
 
@@ -1727,11 +1654,7 @@ func (h *handlers) handleGeoDist(cmd *gedis_types.Command) error {
 		return fmt.Errorf("invalid member: %s", args[2])
 	}
 
-	geoSet, exists := h.db.GetGeoIndex(key)
-	if !exists {
-		cmd.WriteAny(resp.BulkStr{Size: -1})
-		return nil
-	}
+	geoSet := h.db.GetOrCreateGeoIndex(key)
 
 	distance, err := geoSet.Dist(member1, member2)
 	if err != nil {

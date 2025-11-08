@@ -91,15 +91,11 @@ func (d *database) DeleteSortedSet(key any) bool {
 func (d *database) GetOrCreateGeoIndex(key any) *data.GeoIndex {
 	gi, exists := d.gi[key]
 	if !exists {
-		gi = data.NewGeoIndex(52)
+		ss := d.GetOrCreateSortedSet(key)
+		gi = data.NewGeoIndexFromSet(52, ss)
 		d.gi[key] = gi
 	}
 	return gi
-}
-
-func (d *database) GetGeoIndex(key any) (*data.GeoIndex, bool) {
-	gi, exists := d.gi[key]
-	return gi, exists
 }
 
 func (d *database) DeleteGeoIndex(key any) bool {

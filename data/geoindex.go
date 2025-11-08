@@ -9,13 +9,19 @@ import (
 
 type GeoIndex struct {
 	bits int
-	set  *SortedSet[uint64]
+	set  *SortedSet[float64]
 }
 
 func NewGeoIndex(precision int) *GeoIndex {
 	return &GeoIndex{
 		bits: precision,
-		set:  NewSortedSet[uint64](),
+		set:  NewSortedSet[float64](),
+	}
+}
+func NewGeoIndexFromSet(precision int, set *SortedSet[float64]) *GeoIndex {
+	return &GeoIndex{
+		bits: precision,
+		set:  set,
 	}
 }
 
@@ -29,7 +35,7 @@ func (i *GeoIndex) Add(key string, lat, lon float64) (bool, error) {
 
 func (i *GeoIndex) add(key string, lat, lon float64) bool {
 	hash := geohash.Encode(lat, lon, i.bits)
-	return i.set.Insert(key, hash)
+	return i.set.Insert(key, float64(hash))
 }
 
 func (i *GeoIndex) validate(lat, lon float64) error {
@@ -47,8 +53,9 @@ func (i *GeoIndex) Get(key string) (lat, lon float64, ok bool) {
 	if !ok {
 		return -1, -1, false
 	}
+	intHash := uint64(hash)
 
-	lat, lon = geohash.Decode(hash, i.bits)
+	lat, lon = geohash.Decode(intHash, i.bits)
 	return lat, lon, true
 }
 
@@ -61,11 +68,12 @@ func (i *GeoIndex) Dist(key1 string, key2 string) (float64, error) {
 	if !ok {
 		return -1, fmt.Errorf("key2 missing in set")
 	}
-	lat1, lon1 := geohash.Decode(k1Hash, i.bits)
-	lat2, lon2 := geohash.Decode(k2Hash, i.bits)
+
+	lat1, lon1 := geohash.Decode(uint64(k1Hash), i.bits)
+	lat2, lon2 := geohash.Decode(uint64(k2Hash), i.bits)
 	return util.Haversine(lat1, lon1, lat2, lon2), nil
 }
 
-func (i *GeoIndex) SortedSet() *SortedSet[uint64] {
+func (i *GeoIndex) SortedSet() *SortedSet[float64] {
 	return i.set
 }
