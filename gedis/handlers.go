@@ -1664,8 +1664,8 @@ func (h *handlers) handleGeoPos(cmd *gedis_types.Command) error {
 	geoSet, exists := h.db.GetGeoIndex(key)
 	if !exists {
 		items := make([]any, 0, len(args)-1)
-		for i := 1; i < len(args); i++ {
-			items = append(items, resp.BulkStr{Size: -1})
+		for i := 1; i < len(args); i += 1 {
+			items = append(items, resp.Array{Size: -1})
 		}
 		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
 		return nil
@@ -1680,7 +1680,7 @@ func (h *handlers) handleGeoPos(cmd *gedis_types.Command) error {
 		}
 		lat, lon, ok := geoSet.Get(member)
 		if !ok {
-			items = append(items, resp.BulkStr{Size: -1})
+			items = append(items, resp.Array{Size: -1})
 		} else {
 			posArr := resp.Array{
 				Size: 2,
