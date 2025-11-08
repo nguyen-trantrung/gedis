@@ -6,6 +6,7 @@ A Redis reimplementation in Go, compatible with the RESP2 protocol.
 
 - Hash maps, sets, and sorted sets
 - Lists and queues
+- Transactions
 - Pub/Sub messaging
 - Geospatial indexing with geohash support
 - Master-slave replication
