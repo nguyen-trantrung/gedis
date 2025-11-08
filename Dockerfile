@@ -1,15 +1,17 @@
 FROM golang:1.24-alpine AS builder
 
-WORKDIR /app
+WORKDIR /build
 COPY go.mod ./
-
 COPY . .
-RUN go build -o gedis .
+
+RUN CGO_ENABLED=0 GOOS=linux go build -o binary ./app
 
 FROM alpine:latest
 
 WORKDIR /app
-COPY --from=builder /app/gedis .
+COPY --from=builder /build/binary .
+RUN chmod +x ./binary
+RUN mv ./binary ./gedis
 
 ENV GEDIS_HOST=0.0.0.0
 ENV GEDIS_PORT=6379
