@@ -1662,7 +1662,8 @@ func (h *handlers) handleGeoDist(cmd *gedis_types.Command) error {
 	}
 
 	if h.shouldWriteOutput(cmd) {
-		cmd.WriteAny(distance)
+		distStr := fmt.Sprintf("%.6f", distance)
+		cmd.WriteAny(resp.BulkStr{Size: len(distStr), Value: distStr})
 	}
 
 	return nil
