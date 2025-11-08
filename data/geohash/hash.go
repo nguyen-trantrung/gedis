@@ -7,7 +7,7 @@ func Encode(lat, lon float64, bits int) uint64 {
 		bits = 52
 	}
 
-	latRange := [2]float64{-85.05112878, -85.05112878}
+	latRange := [2]float64{-85.05112878, 85.05112878}
 	lonRange := [2]float64{-180.0, 180.0}
 
 	var hash uint64
@@ -47,7 +47,7 @@ func Decode(hash uint64, bits int) (lat, lon float64) {
 		bits = 52
 	}
 
-	latRange := [2]float64{-85.05112878, -85.05112878}
+	latRange := [2]float64{-85.05112878, 85.05112878}
 	lonRange := [2]float64{-180.0, 180.0}
 
 	isEven := true
