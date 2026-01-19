@@ -152,3 +152,78 @@ func (l *LinkedList) leftIndex(index int) (any, bool) {
 	}
 	return curr.value, true
 }
+
+func (l *LinkedList) LeftSet(index int, value any) bool {
+	if index < 0 {
+		index = l.size + index
+	}
+	if index < 0 || index >= l.size {
+		return false
+	}
+
+	curr := l.head
+	for i := 0; i < index && curr != nil; i += 1 {
+		curr = curr.next
+	}
+	if curr == nil {
+		return false
+	}
+	curr.value = value
+	return true
+}
+
+func (l *LinkedList) Trim(start, stop int) {
+	if start < 0 {
+		start = l.size + start
+	}
+	if stop < 0 {
+		stop = l.size + stop
+	}
+	if start < 0 {
+		start = 0
+	}
+	if stop >= l.size {
+		stop = l.size - 1
+	}
+
+	if start > stop || l.head == nil {
+		// Empty the list
+		l.head = nil
+		l.tail = nil
+		l.size = 0
+		return
+	}
+
+	// Find the start node
+	curr := l.head
+	for i := 0; i < start && curr != nil; i += 1 {
+		curr = curr.next
+	}
+	if curr == nil {
+		return
+	}
+	newHead := curr
+
+	// Find the stop node
+	for i := start; i < stop && curr != nil; i += 1 {
+		curr = curr.next
+	}
+	if curr == nil {
+		return
+	}
+	newTail := curr
+
+	// Disconnect nodes outside the range
+	if newHead.prev != nil {
+		newHead.prev.next = nil
+		newHead.prev = nil
+	}
+	if newTail.next != nil {
+		newTail.next.prev = nil
+		newTail.next = nil
+	}
+
+	l.head = newHead
+	l.tail = newTail
+	l.size = stop - start + 1
+}

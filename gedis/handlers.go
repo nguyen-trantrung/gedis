@@ -3,6 +3,7 @@ package gedis
 import (
 	"fmt"
 	"log"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -57,41 +58,68 @@ func newHandlers(db *database, info *info.Info, pubsub *pubsub, master *repl.Mas
 
 func (h *handlers) init() {
 	h.hmap = map[string]handlerEntry{
-		"ping":        {h.handlePing, false},
-		"echo":        {h.handleEcho, false},
-		"select":      {h.handleSelect, false},
-		"set":         {h.handleSet, true},
-		"get":         {h.handleGet, false},
-		"rpush":       {h.handleRPush, true},
-		"lpush":       {h.handleLPush, true},
-		"lpop":        {h.handleLPop, true},
-		"rpop":        {h.handleRPop, true},
-		"lrange":      {h.handleLRange, false},
-		"llen":        {h.handleLLen, false},
-		"lindex":      {h.handleLIndex, false},
-		"blpop":       {h.handleBlockLpop, false},
-		"incr":        {h.handleIncr, true},
-		"multi":       {h.handleMulti, true},
-		"exec":        {h.handleExec, true},
-		"discard":     {h.handleDiscard, true},
-		"info":        {h.handleInfo, false},
-		"replconf":    {h.handleReplConf, false},
-		"psync":       {h.handlePsync, false},
-		"wait":        {h.handleWait, false},
-		"subscribe":   {h.handleSubscribe, false},
-		"unsubscribe": {h.handleUnsubscribe, false},
-		"publish":     {h.handlePublish, true},
-		"quit":        {h.handleQuit, false},
-		"zadd":        {h.handleZadd, true},
-		"zrem":        {h.handleZrem, true},
-		"zscore":      {h.handleZscore, false},
-		"zcard":       {h.handleZcard, false},
-		"zrange":      {h.handleZrange, false},
-		"zrank":       {h.handleZrank, false},
-		"geoadd":      {h.handleGeoAdd, true},
-		"geopos":      {h.handleGeoPos, false},
-		"geodist":     {h.handleGeoDist, false},
-		"geosearch":   {h.handleGeoSearch, false},
+		"ping":             {h.handlePing, false},
+		"echo":             {h.handleEcho, false},
+		"select":           {h.handleSelect, false},
+		"del":              {h.handleDel, true},
+		"set":              {h.handleSet, true},
+		"get":              {h.handleGet, false},
+		"mset":             {h.handleMSet, true},
+		"mget":             {h.handleMGet, false},
+		"incrby":           {h.handleIncrBy, true},
+		"decrby":           {h.handleDecrBy, true},
+		"append":           {h.handleAppend, true},
+		"strlen":           {h.handleStrLen, false},
+		"getrange":         {h.handleGetRange, false},
+		"setrange":         {h.handleSetRange, true},
+		"rpush":            {h.handleRPush, true},
+		"lpush":            {h.handleLPush, true},
+		"lpop":             {h.handleLPop, true},
+		"rpop":             {h.handleRPop, true},
+		"lrange":           {h.handleLRange, false},
+		"llen":             {h.handleLLen, false},
+		"lindex":           {h.handleLIndex, false},
+		"lset":             {h.handleLSet, true},
+		"ltrim":            {h.handleLTrim, true},
+		"blpop":            {h.handleBlockLpop, false},
+		"hset":             {h.handleHSet, true},
+		"hget":             {h.handleHGet, false},
+		"hmget":            {h.handleHMGet, false},
+		"hgetall":          {h.handleHGetAll, false},
+		"hincrby":          {h.handleHIncrBy, true},
+		"hexists":          {h.handleHExists, false},
+		"hdel":             {h.handleHDel, true},
+		"hlen":             {h.handleHLen, false},
+		"hkeys":            {h.handleHKeys, false},
+		"hvals":            {h.handleHVals, false},
+		"incr":             {h.handleIncr, true},
+		"multi":            {h.handleMulti, true},
+		"exec":             {h.handleExec, true},
+		"discard":          {h.handleDiscard, true},
+		"info":             {h.handleInfo, false},
+		"replconf":         {h.handleReplConf, false},
+		"psync":            {h.handlePsync, false},
+		"wait":             {h.handleWait, false},
+		"subscribe":        {h.handleSubscribe, false},
+		"unsubscribe":      {h.handleUnsubscribe, false},
+		"publish":          {h.handlePublish, true},
+		"quit":             {h.handleQuit, false},
+		"zadd":             {h.handleZadd, true},
+		"zrem":             {h.handleZrem, true},
+		"zscore":           {h.handleZscore, false},
+		"zcard":            {h.handleZcard, false},
+		"zrange":           {h.handleZrange, false},
+		"zrank":            {h.handleZrank, false},
+		"zrevrange":        {h.handleZrevrange, false},
+		"zrevrank":         {h.handleZrevrank, false},
+		"zincrby":          {h.handleZincrby, true},
+		"zcount":           {h.handleZcount, false},
+		"zrangebyscore":    {h.handleZrangebyscore, false},
+		"zremrangebyscore": {h.handleZremrangebyscore, true},
+		"geoadd":           {h.handleGeoAdd, true},
+		"geopos":           {h.handleGeoPos, false},
+		"geodist":          {h.handleGeoDist, false},
+		"geosearch":        {h.handleGeoSearch, false},
 	}
 }
 
@@ -203,6 +231,57 @@ func (h *handlers) handleSelect(cmd *gedis_types.Command) error {
 	return nil
 }
 
+func (h *handlers) handleDel(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	deleted := 0
+	for _, arg := range args {
+		key, err := parseBulkStr(arg)
+		if err != nil {
+			return err
+		}
+
+		if _, ok := h.db.HashMap().Delete(key); ok {
+			deleted += 1
+			continue
+		}
+
+		if h.db.DeleteList(key) {
+			deleted += 1
+			continue
+		}
+
+		if h.db.DeleteSortedSet(key) {
+			deleted += 1
+			continue
+		}
+
+		if h.db.DeleteGeoIndex(key) {
+			deleted += 1
+		}
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(deleted)
+	}
+	return nil
+}
+
 func checkExpiry(args []any) (int, bool, error) {
 	if len(args) == 0 {
 		return -1, false, nil
@@ -290,6 +369,70 @@ func (h *handlers) handleGet(cmd *gedis_types.Command) error {
 		return nil
 	}
 	cmd.WriteAny(value)
+	return nil
+}
+
+func (h *handlers) handleMSet(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 2 || len(args)%2 != 0 {
+		return fmt.Errorf("%w: wrong number of arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	for i := 0; i < len(args); i += 2 {
+		key, err := parseBulkStr(args[i])
+		if err != nil {
+			return err
+		}
+		value := args[i+1]
+		h.db.HashMap().Set(key, value, -1)
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny("OK")
+	}
+	return nil
+}
+
+func (h *handlers) handleMGet(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	items := make([]any, len(args))
+	for i, arg := range args {
+		key, err := parseBulkStr(arg)
+		if err != nil {
+			return err
+		}
+		value, ok := h.db.HashMap().Get(key)
+		if !ok {
+			items[i] = resp.BulkStr{Size: -1}
+		} else {
+			items[i] = value
+		}
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
 	return nil
 }
 
@@ -501,7 +644,7 @@ func (h *handlers) handleRPop(cmd *gedis_types.Command) error {
 
 	if len(args) >= 2 {
 		items := make([]any, 0, count)
-		for i := 0; i < count; i++ {
+		for i := 0; i < count; i += 1 {
 			value, ok := list.RightPop()
 			if !ok {
 				break
@@ -631,6 +774,102 @@ func (h *handlers) handleLIndex(cmd *gedis_types.Command) error {
 	return nil
 }
 
+func (h *handlers) handleLSet(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	index, err := parseInt(args[1])
+	if err != nil {
+		return err
+	}
+
+	value := args[2]
+
+	list, exists := h.db.GetList(key)
+	if !exists {
+		return fmt.Errorf("no such key")
+	}
+
+	ok := list.LeftSet(index, value)
+	if !ok {
+		return fmt.Errorf("index out of range")
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny("OK")
+	}
+	return nil
+}
+
+func (h *handlers) handleLTrim(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	start, err := parseInt(args[1])
+	if err != nil {
+		return err
+	}
+
+	stop, err := parseInt(args[2])
+	if err != nil {
+		return err
+	}
+
+	list, exists := h.db.GetList(key)
+	if !exists {
+		// LTRIM on non-existent key is OK
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny("OK")
+		}
+		return nil
+	}
+
+	list.Trim(start, stop)
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny("OK")
+	}
+	return nil
+}
+
 func (h *handlers) handleBlockLpop(cmd *gedis_types.Command) error {
 	if cmd.IsSubMode() {
 		return h.subModeErr(cmd)
@@ -736,6 +975,732 @@ func (h *handlers) handleIncr(cmd *gedis_types.Command) error {
 		return fmt.Errorf("value is not an integer or out of range")
 	}
 
+	return nil
+}
+
+func (h *handlers) handleIncrBy(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) != 2 {
+		return fmt.Errorf("%w: requires exactly 2 arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	increment, err := parseInt(args[1])
+	if err != nil {
+		return fmt.Errorf("increment value is not an integer")
+	}
+
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	val, ok := h.db.hm.Get(key)
+	if !ok {
+		numStr := fmt.Sprintf("%d", increment)
+		h.db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(increment)
+		}
+		return nil
+	}
+
+	switch val.(type) {
+	case resp.BulkStr, string:
+		num, err := parseInt(val)
+		if err != nil {
+			return fmt.Errorf("value is not an integer or out of range")
+		}
+		num += increment
+		numStr := fmt.Sprintf("%d", num)
+		h.db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(num)
+		}
+	default:
+		return fmt.Errorf("value is not an integer or out of range")
+	}
+
+	return nil
+}
+
+func (h *handlers) handleDecrBy(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) != 2 {
+		return fmt.Errorf("%w: requires exactly 2 arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	decrement, err := parseInt(args[1])
+	if err != nil {
+		return fmt.Errorf("decrement value is not an integer")
+	}
+
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	val, ok := h.db.hm.Get(key)
+	if !ok {
+		numStr := fmt.Sprintf("%d", -decrement)
+		h.db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(-decrement)
+		}
+		return nil
+	}
+
+	switch val.(type) {
+	case resp.BulkStr, string:
+		num, err := parseInt(val)
+		if err != nil {
+			return fmt.Errorf("value is not an integer or out of range")
+		}
+		num -= decrement
+		numStr := fmt.Sprintf("%d", num)
+		h.db.HashMap().Set(key, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(num)
+		}
+	default:
+		return fmt.Errorf("value is not an integer or out of range")
+	}
+
+	return nil
+}
+
+func (h *handlers) handleAppend(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) != 2 {
+		return fmt.Errorf("%w: requires exactly 2 arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	appendValue, err := parseBulkStr(args[1])
+	if err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	val, ok := h.db.hm.Get(key)
+	var newValue string
+	if !ok {
+		newValue = appendValue
+	} else {
+		existingStr, err := parseStr(val)
+		if err != nil {
+			return fmt.Errorf("value is not a string")
+		}
+		newValue = existingStr + appendValue
+	}
+
+	h.db.HashMap().Set(key, resp.BulkStr{Size: len(newValue), Value: newValue}, 0)
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(len(newValue))
+	}
+
+	return nil
+}
+
+func (h *handlers) handleStrLen(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) != 1 {
+		return fmt.Errorf("%w: requires exactly 1 argument", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	val, ok := h.db.hm.Get(key)
+	if !ok {
+		cmd.WriteAny(0)
+		return nil
+	}
+
+	str, err := parseStr(val)
+	if err != nil {
+		return fmt.Errorf("value is not a string")
+	}
+
+	cmd.WriteAny(len(str))
+	return nil
+}
+
+func (h *handlers) handleGetRange(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) != 3 {
+		return fmt.Errorf("%w: requires exactly 3 arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	start, err := parseInt(args[1])
+	if err != nil {
+		return err
+	}
+
+	end, err := parseInt(args[2])
+	if err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	val, ok := h.db.hm.Get(key)
+	if !ok {
+		cmd.WriteAny(resp.BulkStr{Size: 0, Value: ""})
+		return nil
+	}
+
+	str, err := parseStr(val)
+	if err != nil {
+		return fmt.Errorf("value is not a string")
+	}
+
+	strLen := len(str)
+	if start < 0 {
+		start = strLen + start
+	}
+	if end < 0 {
+		end = strLen + end
+	}
+
+	if start < 0 {
+		start = 0
+	}
+	if end >= strLen {
+		end = strLen - 1
+	}
+
+	if start > end || start >= strLen {
+		cmd.WriteAny(resp.BulkStr{Size: 0, Value: ""})
+		return nil
+	}
+
+	substr := str[start : end+1]
+	cmd.WriteAny(resp.BulkStr{Size: len(substr), Value: substr})
+	return nil
+}
+
+func (h *handlers) handleSetRange(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) != 3 {
+		return fmt.Errorf("%w: requires exactly 3 arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	offset, err := parseInt(args[1])
+	if err != nil {
+		return err
+	}
+
+	if offset < 0 {
+		return fmt.Errorf("offset is out of range")
+	}
+
+	replacement, err := parseBulkStr(args[2])
+	if err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	val, ok := h.db.hm.Get(key)
+	var str string
+	if !ok {
+		str = ""
+	} else {
+		str, err = parseStr(val)
+		if err != nil {
+			return fmt.Errorf("value is not a string")
+		}
+	}
+
+	// Extend string with null bytes if needed
+	if offset > len(str) {
+		str += strings.Repeat("\x00", offset-len(str))
+	}
+
+	// Replace characters
+	if offset+len(replacement) > len(str) {
+		str = str[:offset] + replacement
+	} else {
+		str = str[:offset] + replacement + str[offset+len(replacement):]
+	}
+
+	h.db.HashMap().Set(key, resp.BulkStr{Size: len(str), Value: str}, 0)
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(len(str))
+	}
+
+	return nil
+}
+
+func (h *handlers) handleHSet(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 3 || len(args)%2 == 0 {
+		return fmt.Errorf("%w: wrong number of arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	added := 0
+	for i := 1; i < len(args); i += 2 {
+		field, err := parseBulkStr(args[i])
+		if err != nil {
+			return err
+		}
+		value := args[i+1]
+		compositeKey := fmt.Sprintf("%s:%s", key, field)
+		if !h.db.HashMap().Set(compositeKey, value, -1) {
+			added++
+		}
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(added)
+	}
+	return nil
+}
+
+func (h *handlers) handleHGet(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	field, err := parseBulkStr(args[1])
+	if err != nil {
+		return err
+	}
+
+	compositeKey := fmt.Sprintf("%s:%s", key, field)
+	value, ok := h.db.HashMap().Get(compositeKey)
+	if !ok {
+		cmd.WriteAny(resp.BulkStr{Size: -1})
+		return nil
+	}
+
+	cmd.WriteAny(value)
+	return nil
+}
+
+func (h *handlers) handleHMGet(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	values := make([]any, len(args)-1)
+	for i := 1; i < len(args); i++ {
+		field, err := parseBulkStr(args[i])
+		if err != nil {
+			return err
+		}
+
+		compositeKey := fmt.Sprintf("%s:%s", key, field)
+		value, ok := h.db.HashMap().Get(compositeKey)
+		if !ok {
+			values[i-1] = resp.BulkStr{Size: -1}
+		} else {
+			values[i-1] = value
+		}
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(values), Items: values})
+	return nil
+}
+
+func (h *handlers) handleHGetAll(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	prefix := fmt.Sprintf("^%s:", regexp.QuoteMeta(key))
+	pattern, err := regexp.Compile(prefix)
+	if err != nil {
+		return err
+	}
+
+	matchingKeys := h.db.HashMap().List(pattern)
+	items := make([]any, 0, len(matchingKeys)*2)
+
+	for _, compositeKey := range matchingKeys {
+		field := strings.TrimPrefix(compositeKey, key+":")
+		value, _ := h.db.HashMap().Get(compositeKey)
+		items = append(items, field, value)
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	return nil
+}
+
+func (h *handlers) handleHIncrBy(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	field, err := parseBulkStr(args[1])
+	if err != nil {
+		return err
+	}
+
+	increment, err := parseInt(args[2])
+	if err != nil {
+		return fmt.Errorf("increment value is not an integer")
+	}
+
+	compositeKey := fmt.Sprintf("%s:%s", key, field)
+	value, ok := h.db.HashMap().Get(compositeKey)
+
+	var newValue int
+	if !ok {
+		newValue = increment
+	} else {
+		currentVal, err := parseInt(value)
+		if err != nil {
+			return fmt.Errorf("hash value is not an integer")
+		}
+		newValue = currentVal + increment
+	}
+
+	numStr := fmt.Sprintf("%d", newValue)
+	h.db.HashMap().Set(compositeKey, resp.BulkStr{Size: len(numStr), Value: numStr}, 0)
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(newValue)
+	}
+	return nil
+}
+
+func (h *handlers) handleHExists(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	field, err := parseBulkStr(args[1])
+	if err != nil {
+		return err
+	}
+
+	compositeKey := fmt.Sprintf("%s:%s", key, field)
+	_, exists := h.db.HashMap().Get(compositeKey)
+
+	if exists {
+		cmd.WriteAny(1)
+	} else {
+		cmd.WriteAny(0)
+	}
+	return nil
+}
+
+func (h *handlers) handleHDel(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	if err := h.checkSlaveWrite(cmd); err != nil {
+		return err
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	deleted := 0
+	for i := 1; i < len(args); i++ {
+		field, err := parseBulkStr(args[i])
+		if err != nil {
+			return err
+		}
+
+		compositeKey := fmt.Sprintf("%s:%s", key, field)
+		if _, ok := h.db.HashMap().Delete(compositeKey); ok {
+			deleted++
+		}
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(deleted)
+	}
+	return nil
+}
+
+func (h *handlers) handleHLen(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	prefix := fmt.Sprintf("^%s:", regexp.QuoteMeta(key))
+	pattern, err := regexp.Compile(prefix)
+	if err != nil {
+		return err
+	}
+
+	matchingKeys := h.db.HashMap().List(pattern)
+	cmd.WriteAny(len(matchingKeys))
+	return nil
+}
+
+func (h *handlers) handleHKeys(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	prefix := fmt.Sprintf("^%s:", regexp.QuoteMeta(key))
+	pattern, err := regexp.Compile(prefix)
+	if err != nil {
+		return err
+	}
+
+	matchingKeys := h.db.HashMap().List(pattern)
+	keys := make([]any, len(matchingKeys))
+
+	for i, compositeKey := range matchingKeys {
+		field := strings.TrimPrefix(compositeKey, key+":")
+		keys[i] = field
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(keys), Items: keys})
+	return nil
+}
+
+func (h *handlers) handleHVals(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return err
+	}
+
+	prefix := fmt.Sprintf("^%s:", regexp.QuoteMeta(key))
+	pattern, err := regexp.Compile(prefix)
+	if err != nil {
+		return err
+	}
+
+	matchingKeys := h.db.HashMap().List(pattern)
+	values := make([]any, len(matchingKeys))
+
+	for i, compositeKey := range matchingKeys {
+		value, _ := h.db.HashMap().Get(compositeKey)
+		values[i] = value
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(values), Items: values})
 	return nil
 }
 
@@ -1335,7 +2300,15 @@ func (h *handlers) handleZrange(cmd *gedis_types.Command) error {
 	}
 
 	args := cmd.Cmd.Args
-	if len(args) < 3 {
+	withScores := false
+	argCount := len(args)
+	if argCount >= 4 {
+		if str, ok := args[3].(string); ok && strings.ToUpper(str) == "WITHSCORES" {
+			withScores = true
+			argCount = 3
+		}
+	}
+	if argCount < 3 {
 		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
 	}
 
@@ -1377,11 +2350,20 @@ func (h *handlers) handleZrange(cmd *gedis_types.Command) error {
 		stop = set.Len() - 1
 	}
 
-	items := make([]any, 0, stop-start+1)
+	items := make([]any, 0, (stop-start+1)*(1+func() int {
+		if withScores {
+			return 1
+		} else {
+			return 0
+		}
+	}()))
 
 	nodes := set.Range(start, stop+1) // zrange is inclusive
 	for _, node := range nodes {
 		items = append(items, node.Value)
+		if withScores {
+			items = append(items, node.Score)
+		}
 	}
 
 	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
@@ -1430,7 +2412,7 @@ func (h *handlers) handleZscore(cmd *gedis_types.Command) error {
 	}
 
 	if h.shouldWriteOutput(cmd) {
-		scoreStr := fmt.Sprintf("%.64f", score)
+		scoreStr := strconv.FormatFloat(score, 'f', -1, 64)
 		cmd.WriteAny(resp.BulkStr{Size: len(scoreStr), Value: scoreStr})
 	}
 
@@ -1467,7 +2449,7 @@ func (h *handlers) handleZrem(cmd *gedis_types.Command) error {
 
 	removed := 0
 
-	for i := 1; i < len(args); i++ {
+	for i := 1; i < len(args); i += 1 {
 		member, err := parseBulkStr(args[i])
 		if err != nil {
 			return fmt.Errorf("invalid member: %s", args[i])
@@ -1515,6 +2497,329 @@ func (h *handlers) handleZcard(cmd *gedis_types.Command) error {
 
 	if h.shouldWriteOutput(cmd) {
 		cmd.WriteAny(set.Len())
+	}
+
+	return nil
+}
+
+func (h *handlers) handleZrevrange(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	withScores := false
+	argCount := len(args)
+	if argCount >= 4 {
+		if str, ok := args[3].(string); ok && strings.ToUpper(str) == "WITHSCORES" {
+			withScores = true
+			argCount = 3
+		}
+	}
+	if argCount < 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	start, err := parseInt(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid start index: %s", args[1])
+	}
+
+	stop, err := parseInt(args[2])
+	if err != nil {
+		return fmt.Errorf("invalid stop index: %s", args[2])
+	}
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	if stop < 0 {
+		stop = set.Len() + stop
+	}
+
+	if start < 0 {
+		start = set.Len() + start
+	}
+
+	if start > stop || start >= set.Len() {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	if stop >= set.Len() {
+		stop = set.Len() - 1
+	}
+
+	items := make([]any, 0, (stop-start+1)*(1+func() int {
+		if withScores {
+			return 1
+		} else {
+			return 0
+		}
+	}()))
+
+	nodes := set.ReverseRange(start, stop+1) // zrevrange is inclusive
+	for _, node := range nodes {
+		items = append(items, node.Value)
+		if withScores {
+			items = append(items, node.Score)
+		}
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	return nil
+}
+
+func (h *handlers) handleZrevrank(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	member, err := parseBulkStr(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid member: %s", args[1])
+	}
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		cmd.WriteAny(nil)
+		return nil
+	}
+
+	rank, exists := set.ReverseRank(member)
+	if !exists {
+		cmd.WriteAny(nil)
+		return nil
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(rank)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleZincrby(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	delta, err := parseFloat(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid increment: %s", args[1])
+	}
+
+	member, err := parseBulkStr(args[2])
+	if err != nil {
+		return fmt.Errorf("invalid member: %s", args[2])
+	}
+
+	set := h.db.GetOrCreateSortedSet(key)
+
+	newScore, _ := set.IncrementScore(member, delta)
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(newScore)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleZcount(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	min, err := parseFloat(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid min score: %s", args[1])
+	}
+
+	max, err := parseFloat(args[2])
+	if err != nil {
+		return fmt.Errorf("invalid max score: %s", args[2])
+	}
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(0)
+		}
+		return nil
+	}
+
+	count := set.CountByScore(min, max)
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(count)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleZrangebyscore(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	withScores := false
+	argCount := len(args)
+	if argCount >= 4 {
+		if str, ok := args[3].(string); ok && strings.ToUpper(str) == "WITHSCORES" {
+			withScores = true
+			argCount = 3
+		}
+	}
+	if argCount < 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	min, err := parseFloat(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid min score: %s", args[1])
+	}
+
+	max, err := parseFloat(args[2])
+	if err != nil {
+		return fmt.Errorf("invalid max score: %s", args[2])
+	}
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	nodes := set.RangeByScore(min, max)
+	items := make([]any, 0, len(nodes)*(1+func() int {
+		if withScores {
+			return 1
+		} else {
+			return 0
+		}
+	}()))
+	for _, node := range nodes {
+		items = append(items, node.Value)
+		if withScores {
+			items = append(items, node.Score)
+		}
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	return nil
+}
+
+func (h *handlers) handleZremrangebyscore(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 3 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	min, err := parseFloat(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid min score: %s", args[1])
+	}
+
+	max, err := parseFloat(args[2])
+	if err != nil {
+		return fmt.Errorf("invalid max score: %s", args[2])
+	}
+
+	set, exists := h.db.GetSortedSet(key)
+	if !exists {
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(0)
+		}
+		return nil
+	}
+
+	removed := set.RemoveByScore(min, max)
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(removed)
 	}
 
 	return nil

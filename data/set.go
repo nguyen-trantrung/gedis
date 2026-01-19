@@ -240,3 +240,81 @@ func (s *SortedSet[S]) getRangeByScore(min S, max S) []Node[S] {
 	}
 	return result
 }
+
+func (s *SortedSet[S]) ReverseRange(lidx int, ridx int) []Node[S] {
+	return s.getReverseRange(lidx, ridx)
+}
+
+func (s *SortedSet[S]) getReverseRange(lidx int, ridx int) []Node[S] {
+	if lidx >= ridx {
+		return nil
+	}
+	result := make([]Node[S], 0, ridx-lidx+1)
+	iter := s.tail.cells[0].prev
+	total := len(s.scores)
+	for i := total - 1; i >= 0; i -= 1 {
+		if iter == s.head {
+			break
+		}
+		if i >= lidx && i < ridx {
+			result = append(result, Node[S]{
+				Score: iter.score,
+				Value: iter.value,
+			})
+		}
+		iter = iter.cells[0].prev
+	}
+	return result
+}
+
+func (s *SortedSet[S]) ReverseRank(value string) (int, bool) {
+	score, exists := s.scores[value]
+	if !exists {
+		return -1, false
+	}
+	return s.reverseRank(value, score), true
+}
+
+func (s *SortedSet[S]) reverseRank(value string, score S) int {
+	col := s.lowerBound(score, value)
+	if s.compare(col, &column[S]{nil, value, score}) != 0 {
+		panic("reverseRank called on non-existing member")
+	}
+	rank := 0
+	for iter := s.tail.cells[0].prev; iter != col; iter = iter.cells[0].prev {
+		rank += 1
+	}
+	return rank
+}
+
+func (s *SortedSet[S]) IncrementScore(value string, delta S) (S, bool) {
+	score, exists := s.scores[value]
+	if exists {
+		s.Remove(value)
+	}
+	newScore := score + delta
+	s.Insert(value, newScore)
+	return newScore, exists
+}
+
+func (s *SortedSet[S]) CountByScore(min S, max S) int {
+	count := 0
+	iter := s.lowerBound(min, "")
+	for iter != s.tail && cmp.Compare(iter.score, max) <= 0 {
+		count++
+		iter = iter.cells[0].next
+	}
+	return count
+}
+
+func (s *SortedSet[S]) RemoveByScore(min S, max S) int {
+	removed := 0
+	iter := s.lowerBound(min, "")
+	for iter != s.tail && cmp.Compare(iter.score, max) <= 0 {
+		next := iter.cells[0].next
+		s.remove(iter.value, iter.score)
+		removed++
+		iter = next
+	}
+	return removed
+}
