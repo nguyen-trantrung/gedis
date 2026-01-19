@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ttn-nguyen42/gedis/data"
 	"github.com/ttn-nguyen42/gedis/gedis/info"
 	"github.com/ttn-nguyen42/gedis/gedis/repl"
 	gedis_types "github.com/ttn-nguyen42/gedis/gedis/types"
@@ -116,6 +117,16 @@ func (h *handlers) init() {
 		"zcount":           {h.handleZcount, false},
 		"zrangebyscore":    {h.handleZrangebyscore, false},
 		"zremrangebyscore": {h.handleZremrangebyscore, true},
+		"sadd":             {h.handleSadd, true},
+		"smembers":         {h.handleSmembers, false},
+		"sismember":        {h.handleSismember, false},
+		"srem":             {h.handleSrem, true},
+		"scard":            {h.handleScard, false},
+		"sinter":           {h.handleSinter, false},
+		"sunion":           {h.handleSunion, false},
+		"sdiff":            {h.handleSdiff, false},
+		"srandmember":      {h.handleSrandmember, false},
+		"spop":             {h.handleSpop, true},
 		"geoadd":           {h.handleGeoAdd, true},
 		"geopos":           {h.handleGeoPos, false},
 		"geodist":          {h.handleGeoDist, false},
@@ -267,6 +278,11 @@ func (h *handlers) handleDel(cmd *gedis_types.Command) error {
 		}
 
 		if h.db.DeleteSortedSet(key) {
+			deleted += 1
+			continue
+		}
+
+		if h.db.DeleteSet(key) {
 			deleted += 1
 			continue
 		}
@@ -2822,6 +2838,459 @@ func (h *handlers) handleZremrangebyscore(cmd *gedis_types.Command) error {
 		cmd.WriteAny(removed)
 	}
 
+	return nil
+}
+
+func (h *handlers) handleSadd(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	set := h.db.GetOrCreateSet(key)
+
+	added := 0
+	for i := 1; i < len(args); i++ {
+		member, err := parseBulkStr(args[i])
+		if err != nil {
+			return fmt.Errorf("invalid member: %s", args[i])
+		}
+
+		if set.Add(member) {
+			added++
+		}
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(added)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleSmembers(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	set, exists := h.db.GetSet(key)
+	if !exists {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	members := set.Members()
+	items := make([]any, len(members))
+	for i, member := range members {
+		items[i] = resp.BulkStr{Size: len(member), Value: member}
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	return nil
+}
+
+func (h *handlers) handleSismember(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	member, err := parseBulkStr(args[1])
+	if err != nil {
+		return fmt.Errorf("invalid member: %s", args[1])
+	}
+
+	set, exists := h.db.GetSet(key)
+	if !exists {
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(0)
+		}
+		return nil
+	}
+
+	contains := 0
+	if set.Contains(member) {
+		contains = 1
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(contains)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleSrem(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 2 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	set, exists := h.db.GetSet(key)
+	if !exists {
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(0)
+		}
+		return nil
+	}
+
+	removed := 0
+	for i := 1; i < len(args); i++ {
+		member, err := parseBulkStr(args[i])
+		if err != nil {
+			return fmt.Errorf("invalid member: %s", args[i])
+		}
+
+		if set.Remove(member) {
+			removed++
+		}
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(removed)
+	}
+
+	return nil
+}
+
+func (h *handlers) handleScard(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) != 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	set, exists := h.db.GetSet(key)
+	if !exists {
+		if h.shouldWriteOutput(cmd) {
+			cmd.WriteAny(0)
+		}
+		return nil
+	}
+
+	if h.shouldWriteOutput(cmd) {
+		cmd.WriteAny(set.Len())
+	}
+
+	return nil
+}
+
+func (h *handlers) handleSinter(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	sets := make([]*data.Set, 0, len(args))
+	for _, arg := range args {
+		key, err := parseBulkStr(arg)
+		if err != nil {
+			return fmt.Errorf("invalid key: %s", arg)
+		}
+
+		set, exists := h.db.GetSet(key)
+		if !exists {
+			cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+			return nil
+		}
+		sets = append(sets, set)
+	}
+
+	if len(sets) == 0 {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	result := sets[0]
+	for i := 1; i < len(sets); i++ {
+		result = result.Intersect(sets[i])
+	}
+
+	members := result.Members()
+	items := make([]any, len(members))
+	for i, member := range members {
+		items[i] = resp.BulkStr{Size: len(member), Value: member}
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	return nil
+}
+
+func (h *handlers) handleSunion(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	sets := make([]*data.Set, 0, len(args))
+	for _, arg := range args {
+		key, err := parseBulkStr(arg)
+		if err != nil {
+			return fmt.Errorf("invalid key: %s", arg)
+		}
+
+		set, exists := h.db.GetSet(key)
+		if !exists {
+			set = data.NewSet()
+		}
+		sets = append(sets, set)
+	}
+
+	if len(sets) == 0 {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	result := sets[0]
+	for i := 1; i < len(sets); i++ {
+		result = result.Union(sets[i])
+	}
+
+	members := result.Members()
+	items := make([]any, len(members))
+	for i, member := range members {
+		items[i] = resp.BulkStr{Size: len(member), Value: member}
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	return nil
+}
+
+func (h *handlers) handleSdiff(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 1 {
+		return fmt.Errorf("%w: not enough arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", args[0])
+	}
+
+	set, exists := h.db.GetSet(key)
+	if !exists {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	result := set
+	for i := 1; i < len(args); i++ {
+		key, err := parseBulkStr(args[i])
+		if err != nil {
+			return fmt.Errorf("invalid key: %s", args[i])
+		}
+
+		other, exists := h.db.GetSet(key)
+		if !exists {
+			continue
+		}
+		result = result.Difference(other)
+	}
+
+	members := result.Members()
+	items := make([]any, len(members))
+	for i, member := range members {
+		items[i] = resp.BulkStr{Size: len(member), Value: member}
+	}
+
+	cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	return nil
+}
+
+func (h *handlers) handleSrandmember(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 1 || len(args) > 2 {
+		return fmt.Errorf("%w: wrong number of arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	count := 1
+	if len(args) == 2 {
+		count, err = parseInt(args[1])
+		if err != nil {
+			return fmt.Errorf("invalid count: %s", args[1])
+		}
+	}
+
+	set, exists := h.db.GetSet(key)
+	if !exists {
+		cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		return nil
+	}
+
+	members := set.RandomMembers(count)
+	items := make([]any, len(members))
+	for i, member := range members {
+		items[i] = resp.BulkStr{Size: len(member), Value: member}
+	}
+
+	if count == 1 && len(items) == 1 {
+		cmd.WriteAny(items[0])
+	} else {
+		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	}
+	return nil
+}
+
+func (h *handlers) handleSpop(cmd *gedis_types.Command) error {
+	if cmd.IsSubMode() {
+		return h.subModeErr(cmd)
+	}
+
+	defer cmd.SetDone()
+	if h.checkInTx(cmd) {
+		return nil
+	}
+
+	args := cmd.Cmd.Args
+	if len(args) < 1 || len(args) > 2 {
+		return fmt.Errorf("%w: wrong number of arguments", ErrInvalidArguments)
+	}
+
+	key, err := parseBulkStr(args[0])
+	if err != nil {
+		return fmt.Errorf("invalid key: %s", key)
+	}
+
+	count := 1
+	if len(args) == 2 {
+		count, err = parseInt(args[1])
+		if err != nil {
+			return fmt.Errorf("invalid count: %s", args[1])
+		}
+	}
+
+	set, exists := h.db.GetSet(key)
+	if !exists {
+		if count == 1 {
+			cmd.WriteAny(nil)
+		} else {
+			cmd.WriteAny(resp.Array{Size: 0, Items: []any{}})
+		}
+		return nil
+	}
+
+	members := set.PopRandom(count)
+	items := make([]any, len(members))
+	for i, member := range members {
+		items[i] = resp.BulkStr{Size: len(member), Value: member}
+	}
+
+	if count == 1 && len(items) == 1 {
+		cmd.WriteAny(items[0])
+	} else {
+		cmd.WriteAny(resp.Array{Size: len(items), Items: items})
+	}
 	return nil
 }
 
