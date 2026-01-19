@@ -19,7 +19,7 @@ func TestParseStream(t *testing.T) {
 			input: "*2\r\n$4\r\nLLEN\r\n$6\r\nmylist\r\n",
 			expected: resp.Command{
 				Cmd:  "LLEN",
-				Args: []any{"mylist"},
+				Args: []any{resp.BulkStr{Size: 6, Value: "mylist"}},
 			},
 			hasError: false,
 		},

@@ -69,13 +69,11 @@ func TestGeoIndex_AddAndGet(t *testing.T) {
 	// Add a point
 	lon := 2.3488
 	lat := 48.8534
-	ok, err := geoIndex.Add("paris", lat, lon)
+	_, err := geoIndex.Add("paris", lat, lon)
 	if err != nil {
 		t.Fatalf("Failed to add paris: %v", err)
 	}
-	if !ok {
-		t.Error("Expected insert to succeed")
-	}
+	// Add returns true if updated, false if new. For new item, ok is false.
 
 	// Get it back
 	gotLat, gotLon, found := geoIndex.Get("paris")

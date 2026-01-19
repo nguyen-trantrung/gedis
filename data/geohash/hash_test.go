@@ -156,7 +156,7 @@ func TestEncode_NearbyLocations_SimilarHash(t *testing.T) {
 	// Two locations very close to each other should have similar hashes
 	lat1, lon1 := 40.7128, -74.0060 // New York
 	lat2, lon2 := 40.7129, -74.0061 // Very close to New York
-	precision := 30
+	precision := 52
 
 	hash1 := geohash.Encode(lat1, lon1, precision)
 	hash2 := geohash.Encode(lat2, lon2, precision)

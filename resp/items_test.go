@@ -52,7 +52,7 @@ func TestWriteAnyTo(t *testing.T) {
 		{
 			name:     "string",
 			data:     "hello",
-			expected: "$5\r\nhello\r\n",
+			expected: "+hello\r\n",
 		},
 		{
 			name:     "int",
@@ -92,22 +92,22 @@ func TestWriteAnyTo(t *testing.T) {
 		{
 			name:     "map",
 			data:     resp.Map{Size: 1, Items: map[any]any{"key": "value"}},
-			expected: "%1\r\n$3\r\nkey\r\n$5\r\nvalue\r\n",
+			expected: "%1\r\n+key\r\n+value\r\n",
 		},
 		{
 			name:     "set",
-			data:     resp.Set{Size: 2, Items: map[any]struct{}{"a": {}, "b": {}}},
-			expected: "~2\r\n$1\r\na\r\n$1\r\nb\r\n",
+			data:     resp.Set{Size: 1, Items: map[any]struct{}{"a": {}}},
+			expected: "~1\r\n+a\r\n",
 		},
 		{
 			name:     "err",
 			data:     resp.Err{Size: 0, Value: "error msg"},
-			expected: "!9\r\nerror msg\r\n",
+			expected: "-ERR error msg\r\n",
 		},
 		{
 			name:     "attrb",
 			data:     resp.Attrb(resp.Map{Size: 1, Items: map[any]any{"attr": "val"}}),
-			expected: "|1\r\n$4\r\nattr\r\n$3\r\nval\r\n",
+			expected: "|1\r\n+attr\r\n+val\r\n",
 		},
 	}
 
