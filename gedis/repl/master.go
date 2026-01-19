@@ -247,12 +247,12 @@ func (m *Master) Repl(ctx context.Context, db int, cmd resp.Command) error {
 			continue
 		}
 
-		// if err := m.selectDb(ctx, sd, db); err != nil {
-		// 	if isDisconnected(err, sk, sd) {
-		// 		continue
-		// 	}
-		// 	return fmt.Errorf("failed to select db on slave, addr=%s: %w", sd.client.RemoteAddr(), err)
-		// }
+		if err := m.selectDb(ctx, sd, db); err != nil {
+			if util.IsDisconnected(err) {
+				continue
+			}
+			return fmt.Errorf("failed to select db on slave, addr=%s: %w", sd.client.RemoteAddr(), err)
+		}
 		_, err := sd.client.SendForget(ctx, cmd)
 		if err != nil {
 			if util.IsDisconnected(err) {
